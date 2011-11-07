@@ -174,6 +174,12 @@ public class LockableNode implements Node
     {
         throw lockableNodeException();
     }
+    
+    @Override
+    public int getRelationshipCount()
+    {
+        throw lockableNodeException();
+    }
 
     public Traverser traverse( Order traversalOrder,
             StopEvaluator stopEvaluator,
