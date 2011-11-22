@@ -198,6 +198,12 @@ public class LockableNode implements Node
     {
         throw lockableNodeException();
     }
+    
+    @Override
+    public Iterable<RelationshipType> getRelationshipTypes()
+    {
+        throw lockableNodeException();
+    }
 
     public Traverser traverse( Order traversalOrder,
             StopEvaluator stopEvaluator,
