@@ -312,7 +312,7 @@ public class TestDoubleRecovery extends AbstractSubProcessTestBase
         byteBuf.putLong( Long.parseLong( args[1] ) ).putLong( Long.parseLong( args[2] ) );
         log.txStart( globalId );
         log.addBranch( globalId, UTF8.encode( "414141" ) );
-        log.addBranch( globalId, LuceneDataSource.DEFAULT_BRANCH_ID );
+        log.addBranch( globalId, LuceneDataSource.BRANCH_ID );
         log.markAsCommitting( globalId );
         log.force();
         log.close();

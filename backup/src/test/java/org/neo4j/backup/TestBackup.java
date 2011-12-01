@@ -293,7 +293,7 @@ public class TestBackup
         try
         {
             XaDataSource ds = ((AbstractGraphDatabase)db).getConfig().getTxModule().getXaDataSourceManager().getXaDataSource(
-                    LuceneDataSource.DEFAULT_NAME );
+                    LuceneDataSource.DATA_SOURCE_NAME );
             return ds.getLastCommittedTxId();
         }
         finally
