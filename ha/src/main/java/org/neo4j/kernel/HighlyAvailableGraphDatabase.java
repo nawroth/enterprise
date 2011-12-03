@@ -777,6 +777,12 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
     {
         return localGraph().getReferenceNode();
     }
+    
+    @Override
+    public Node getReferenceNode( String name )
+    {
+        return localGraph().getReferenceNode( name );
+    }
 
     @Override
     public Relationship getRelationshipById( long id )

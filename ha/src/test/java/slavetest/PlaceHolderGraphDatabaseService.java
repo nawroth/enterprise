@@ -74,6 +74,12 @@ public class PlaceHolderGraphDatabaseService extends AbstractGraphDatabase
     {
         return db.getReferenceNode();
     }
+    
+    @Override
+    public Node getReferenceNode( String name )
+    {
+        return db.getReferenceNode( name );
+    }
 
     @Override
     protected void close()
