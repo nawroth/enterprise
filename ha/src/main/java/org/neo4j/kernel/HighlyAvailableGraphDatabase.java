@@ -110,7 +110,7 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
     public static final String CONFIG_KEY_READ_TIMEOUT = "ha.read_timeout";
     public static final String CONFIG_KEY_SLAVE_COORDINATOR_UPDATE_MODE = "ha.slave_coordinator_update_mode";
 
-    private static final String CONFIG_DEFAULT_HA_CLUSTER_NAME = "neo4j.ha";
+    public static final String CONFIG_DEFAULT_HA_CLUSTER_NAME = "neo4j.ha";
     private static final int CONFIG_DEFAULT_PORT = 6361;
 
     private final Map<String, String> config;
@@ -406,13 +406,13 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
                 SlaveUpdateMode.async;
     }
 
-    private int getClientReadTimeoutFromConfig( Map<String, String> config )
+    public static int getClientReadTimeoutFromConfig( Map<String, String> config )
     {
         String value = config.get( CONFIG_KEY_READ_TIMEOUT );
         return value != null ? Integer.parseInt( value ) : Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS;
     }
 
-    private int getMaxConcurrentChannelsPerSlaveFromConfig( Map<String, String> config )
+    public static int getMaxConcurrentChannelsPerSlaveFromConfig( Map<String, String> config )
     {
         String value = config.get( CONFIG_KEY_MAX_CONCURRENT_CHANNELS_PER_SLAVE );
         return value != null ? Integer.parseInt( value ) : Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT;
@@ -465,7 +465,7 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
         return Boolean.parseBoolean( allowInit );
     }
 
-    private static String getCoordinatorsFromConfig( Map<String, String> config )
+    public static String getCoordinatorsFromConfig( Map<String, String> config )
     {
         return getConfigValue( config, CONFIG_KEY_COORDINATORS, CONFIG_KEY_OLD_COORDINATORS );
     }
@@ -642,7 +642,8 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
                 new SlaveTxIdGeneratorFactory( broker, this ),
                 new SlaveTxHook( broker, this ),
                 slaveUpdateMode.createUpdater( broker ),
-                CommonFactories.defaultFileSystemAbstraction() );
+                CommonFactories.defaultFileSystemAbstraction(),
+                CommonFactories.defaultCommandExecutor() );
         instantiateAutoUpdatePullerIfConfigSaysSo();
         logHaInfo( "Started as slave" );
         return result;
@@ -658,7 +659,8 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
                 new MasterTxIdGeneratorFactory( broker ),
                 new MasterTxHook(),
                 new ZooKeeperLastCommittedTxIdSetter( broker ),
-                CommonFactories.defaultFileSystemAbstraction() );
+                CommonFactories.defaultFileSystemAbstraction(),
+                CommonFactories.defaultCommandExecutor() );
         this.masterServer = (MasterServer) broker.instantiateMasterServer( this );
         logHaInfo( "Started as master" );
         return result;
