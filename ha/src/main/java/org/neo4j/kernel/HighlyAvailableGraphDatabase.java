@@ -19,6 +19,32 @@
  */
 package org.neo4j.kernel;
 
+import static java.lang.Math.max;
+import static java.util.Arrays.asList;
+import static org.neo4j.backup.OnlineBackupExtension.parsePort;
+import static org.neo4j.helpers.Exceptions.launderedException;
+import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
+import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
+import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
+import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHistoryFileNamePattern;
+import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHistoryLogVersion;
+
+import java.io.File;
+import java.io.FileFilter;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+
 import org.neo4j.com.Client;
 import org.neo4j.com.ComException;
 import org.neo4j.com.MasterUtil;
@@ -28,7 +54,6 @@ import org.neo4j.com.ToFileStoreWriter;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
-import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.event.ErrorState;
 import org.neo4j.graphdb.event.KernelEventHandler;
 import org.neo4j.graphdb.event.TransactionEventHandler;
@@ -65,32 +90,6 @@ import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 import org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.kernel.impl.util.StringLogger;
-
-import java.io.File;
-import java.io.FileFilter;
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
-
-import static java.lang.Math.max;
-import static java.util.Arrays.asList;
-import static org.neo4j.backup.OnlineBackupExtension.parsePort;
-import static org.neo4j.helpers.Exceptions.launderedException;
-import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
-import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
-import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
-import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHistoryFileNamePattern;
-import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHistoryLogVersion;
 
 public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
         implements GraphDatabaseService, ResponseReceiver
@@ -334,19 +333,29 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
 
     private EmbeddedGraphDbImpl localGraph()
     {
-        if ( localGraph == null )
+        if ( localGraph != null ) return localGraph;
+        return waitForCondition( new LocalGraphAvailableCondition(), (getClientReadTimeoutFromConfig( config )-5)*1000 );
+}
+
+    private <T,E extends Exception> T waitForCondition( Condition<T,E> condition, int timeMillis ) throws E
+    {
+        long endTime = System.currentTimeMillis();
+        T result = condition.tryToFullfill();
+        while ( result == null && System.currentTimeMillis() < endTime )
         {
-            if ( causeOfShutdown != null )
+            try
             {
-                throw new RuntimeException( "Graph database not started", causeOfShutdown );
+                // TODO Naive implementation
+                Thread.sleep( 1 );
             }
-            else
+            catch ( InterruptedException e )
             {
-                throw new RuntimeException( "Graph database not assigned and no cause of shutdown, " +
-                		"maybe not started yet or in the middle of master/slave swap?" );
+                Thread.interrupted();
             }
+            result = condition.tryToFullfill();
+            if ( result != null ) return result;
         }
-        return localGraph;
+        throw condition.failure();
     }
 
     private BrokerFactory defaultBrokerFactory( final GraphDatabaseService graphDb,
@@ -406,10 +415,10 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
                 SlaveUpdateMode.async;
     }
 
-    private int getClientReadTimeoutFromConfig( Map<String, String> config2 )
+    private int getClientReadTimeoutFromConfig( Map<String, String> config )
     {
         String value = config.get( CONFIG_KEY_READ_TIMEOUT );
-        return value != null ? Integer.parseInt( value ) : Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT;
+        return value != null ? Integer.parseInt( value ) : Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS;
     }
 
     private int getMaxConcurrentChannelsPerSlaveFromConfig( Map<String, String> config )
@@ -755,9 +764,9 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
     }
 
     @Override
-    public Transaction beginTx()
+    public TransactionBuilder tx()
     {
-        return localGraph().beginTx();
+        return localGraph().tx();
     }
 
     @Override
@@ -1121,5 +1130,34 @@ public class HighlyAvailableGraphDatabase extends AbstractGraphDatabase
         }
 
         abstract LastCommittedTxIdSetter createUpdater( Broker broker );
+    }
+    
+    private interface Condition<T, E extends Exception>
+    {
+        T tryToFullfill();
+        
+        E failure();
+    }
+    
+    private class LocalGraphAvailableCondition implements Condition<EmbeddedGraphDbImpl, RuntimeException>
+    {
+        @Override
+        public EmbeddedGraphDbImpl tryToFullfill()
+        {
+            return localGraph;
+        }
+        
+        public RuntimeException failure()
+        {
+            if ( causeOfShutdown != null )
+            {
+                return new RuntimeException( "Graph database not started", causeOfShutdown );
+            }
+            else
+            {
+                return new RuntimeException( "Graph database not assigned and no cause of shutdown, " +
+                        "maybe not started yet or in the middle of master/slave swap?" );
+            }
+        }
     }
 }
