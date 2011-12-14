@@ -19,18 +19,24 @@
  */
 package org.neo4j.kernel.ha;
 
+import java.util.Map;
+
 import org.neo4j.com.Protocol;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
 public class FakeMasterBroker extends AbstractBroker
 {
-    public FakeMasterBroker( int myMachineId, GraphDatabaseService graphDb )
+    private Map<String, String> config;
+
+    public FakeMasterBroker( int myMachineId, GraphDatabaseService graphDb, Map<String, String> config )
     {
         super( myMachineId, graphDb );
+        this.config = config;
     }
 
     @Override
@@ -62,6 +68,7 @@ public class FakeMasterBroker extends AbstractBroker
 
     public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
     {
-        return new MasterServer( new MasterImpl( graphDb ), Protocol.PORT, graphDb.getMessageLog() );
+        return new MasterServer( new MasterImpl( graphDb, config ), Protocol.PORT, graphDb.getMessageLog(),
+                HaConfig.getClientLockReadTimeoutFromConfig( config ) );
     }
 }
