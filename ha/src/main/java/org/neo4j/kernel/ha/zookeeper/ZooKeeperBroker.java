@@ -37,11 +37,16 @@ import javax.management.remote.JMXServiceURL;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.util.Map;
 
 public class ZooKeeperBroker extends AbstractBroker
 {
+    // Connect timeout to zk instance for fetching info, in ms
+    private static final int FETCH_INFO_TIMEOUT = 500;
+
     private final ZooClient zooClient;
     private final String haServer;
     private int clientLockReadTimeout;
@@ -85,9 +90,17 @@ public class ZooKeeperBroker extends AbstractBroker
         {
             return result.append( " BAD SERVER STRING" ).toString();
         }
+        SocketAddress sockAddr = new InetSocketAddress( host, port );
         try
         {
-            Socket soc = new Socket( host, port );
+            /*
+             * There is a chance the zk instance has gone down for the count -
+             * the process, the network interface or the whole machine. We don't
+             * want to block the main thread in such a case, just fail.
+             */
+            Socket soc = new Socket();
+            soc.connect( sockAddr, FETCH_INFO_TIMEOUT );
+
             BufferedReader in = new BufferedReader( new InputStreamReader( soc.getInputStream() ) );
             try
             {
@@ -173,7 +186,7 @@ public class ZooKeeperBroker extends AbstractBroker
     {
         return zooClient.getMasterFromZooKeeper( true, allowChange );
     }
-    
+
     @Override
     public Machine getMasterExceptMyself()
     {
@@ -185,7 +198,8 @@ public class ZooKeeperBroker extends AbstractBroker
     public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
     {
         MasterServer server = new MasterServer( new MasterImpl( graphDb, config ),
-                Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog() );
+                Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog(),
+                clientLockReadTimeout );
         return server;
     }
 
@@ -215,6 +229,11 @@ public class ZooKeeperBroker extends AbstractBroker
     @Override
     public void notifyMasterChange( Machine newMaster )
     {
-        zooClient.setDataChangeWatcher( ZooClient.MASTER_NOTIFY_CHILD, newMaster.getMachineId(), true );
+        zooClient.setDataChangeWatcher( ZooClient.MASTER_NOTIFY_CHILD, newMaster.getMachineId() );
+    }
+
+    protected ZooClient getZooClient()
+    {
+        return zooClient;
     }
 }
