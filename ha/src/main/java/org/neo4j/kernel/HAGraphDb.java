@@ -324,15 +324,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         T result = condition.tryToFullfill();
         while ( result == null && System.currentTimeMillis() < endTime )
         {
-            try
-            {
-                // TODO Naive implementation
-                Thread.sleep( 1 );
-            }
-            catch ( InterruptedException e )
-            {
-                Thread.interrupted();
-            }
+            sleepWithoutInterruption( 1, "Failed waiting for " + condition + " to be fulfilled" );
             result = condition.tryToFullfill();
             if ( result != null ) return result;
         }
@@ -609,7 +601,7 @@ public class HAGraphDb extends AbstractGraphDatabase
             catch ( ComException e )
             {   // Maybe new master isn't up yet... let's wait a little and retry
                 failure = e;
-                sleepWithoutInterruption( 500, "Couldn't wait to new attempt of getting master id for tx from master" );
+                sleepWithoutInterruption( 500, "Failed waiting for next attempt to contact master" );
             }
         }
         if ( mastersMaster == null ) throw failure;
