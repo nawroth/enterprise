@@ -772,6 +772,7 @@ public abstract class AbstractHaTest
         executeJob( new CommonJobs.AcquireNodeLockAndReleaseManually( node ), 0 );
         // This should be able to complete
         executeJob( new CommonJobs.SetNodePropertyJob( node, "key", "value" ), 1 );
+        pullUpdates();
     }
     
     static class WorkerThread extends Thread

@@ -82,6 +82,18 @@ public class SingleJvmTest extends AbstractHaTest
     @Override
     protected void awaitAllStarted() throws Exception
     {
+        while ( true )
+        {
+            try
+            {
+                for ( GraphDatabaseService db : haDbs ) db.getReferenceNode();
+                break;
+            }
+            catch ( Exception e )
+            {
+                e.printStackTrace();
+            }
+        }
     }
 
     @Override

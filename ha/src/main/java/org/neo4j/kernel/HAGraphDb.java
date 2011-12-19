@@ -143,17 +143,11 @@ public class HAGraphDb extends AbstractGraphDatabase
                     }
                     catch ( Throwable e )
                     {
-                        e.printStackTrace();
                         sleepWithoutInterruption( 500, "yo" );
                     }
                 }
             }
         }.start();
-//        waitForCondition( new LocalGraphAvailableCondition()
-//        {
-//            public RuntimeException failure() { return null; };
-//        }, 5000 );
-//        sleepWithoutInterruption( 5000, "sk" );
     }
 
     private void initializeTxManagerKernelPanicEventHandler()
