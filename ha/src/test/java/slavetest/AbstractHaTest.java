@@ -763,6 +763,17 @@ public abstract class AbstractHaTest
         jobShouldNotBlock.join();
     }
     
+    @Test
+    public void manuallyAcquireThenReleaseLocks() throws Exception
+    {
+        initializeDbs( 2 );
+        long node = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
+        pullUpdates();
+        executeJob( new CommonJobs.AcquireNodeLockAndReleaseManually( node ), 0 );
+        // This should be able to complete
+        executeJob( new CommonJobs.SetNodePropertyJob( node, "key", "value" ), 1 );
+    }
+    
     static class WorkerThread extends Thread
     {
         private final AbstractHaTest testCase;

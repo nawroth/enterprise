@@ -94,6 +94,7 @@ public class HAGraphDb extends AbstractGraphDatabase
     private final BranchedDataPolicy branchedDataPolicy;
     private final HaConfig.SlaveUpdateMode slaveUpdateMode;
     private final int readTimeout;
+    private final boolean allowInitCluster;
 
     private final List<KernelEventHandler> kernelEventHandlers =
             new CopyOnWriteArrayList<KernelEventHandler>();
@@ -129,7 +130,11 @@ public class HAGraphDb extends AbstractGraphDatabase
         config.put( Config.KEEP_LOGICAL_LOGS, "true" );
         this.brokerFactory = brokerFactory != null ? brokerFactory : defaultBrokerFactory();
         this.broker = this.brokerFactory.create( this, config );
-        startUp( HaConfig.getAllowInitFromConfig( config ) );
+        this.allowInitCluster = HaConfig.getAllowInitFromConfig( config );
+        waitForCondition( new LocalGraphAvailableCondition()
+        {
+            public RuntimeException failure() { return null; };
+        }, 5000 );
     }
 
     private void initializeTxManagerKernelPanicEventHandler()
@@ -190,64 +195,64 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         throw new RuntimeException( "Gave up trying to copy store from master", exception );
     }
+    
+//    private synchronized void startUp( boolean allowInit )
+//    {
+//        StoreId storeId = null;
+//        if ( !new File( getStoreDir(), NeoStore.DEFAULT_NAME ).exists() )
+//        {   // Try for
+//            long endTime = System.currentTimeMillis()+60000;
+//            Exception exception = null;
+//            while ( System.currentTimeMillis() < endTime )
+//            {
+//                // Check if the cluster is up
+//                Pair<Master, Machine> master = broker.getMasterReally( true );
+//                if ( master != null && !master.other().equals( Machine.NO_MACHINE ) &&
+//                        master.other().getMachineId() != machineId )
+//                { // Join the existing cluster
+//                    try
+//                    {
+//                        copyStoreFromMaster( master );
+//                        getMessageLog().logMessage( "copied store from master" );
+//                        exception = null;
+//                        break;
+//                    }
+//                    catch ( Exception e )
+//                    {
+//                        exception = e;
+//                        master = broker.getMasterReally( true );
+//                        getMessageLog().logMessage( "Problems copying store from master", e );
+//                    }
+//                }
+//                else if ( allowInit )
+//                { // Try to initialize the cluster and become master
+//                    exception = null;
+//                    StoreId myStoreId = new StoreId();
+//                    storeId = broker.createCluster( myStoreId );
+//                    if ( storeId.equals( myStoreId ) )
+//                    { // I am master
+//                        break;
+//                    }
+//                }
+//                // I am not master, and could not connect to the master:
+//                // wait for other machine(s) to join.
+//                sleepWithoutInterruption( 300, "Startup interrupted" );
+//            }
+//
+//            if ( exception != null )
+//            {
+//                throw new RuntimeException( "Tried to join the cluster, but was unable to", exception );
+//            }
+//        }
+//        newMaster( storeId, new Exception( "Starting up for the first time" ) );
+//        localGraph();
+//    }
 
     void makeWayForNewDb()
     {
         this.getMessageLog().logMessage( "Cleaning database " + getStoreDir() + " (" + branchedDataPolicy.name() +
                 ") to make way for new db from master" );
         branchedDataPolicy.handle( this );
-    }
-
-    private synchronized void startUp( boolean allowInit )
-    {
-        StoreId storeId = null;
-        if ( !new File( getStoreDir(), NeoStore.DEFAULT_NAME ).exists() )
-        {   // Try for
-            long endTime = System.currentTimeMillis()+60000;
-            Exception exception = null;
-            while ( System.currentTimeMillis() < endTime )
-            {
-                // Check if the cluster is up
-                Pair<Master, Machine> master = broker.getMasterReally( true );
-                if ( master != null && !master.other().equals( Machine.NO_MACHINE ) &&
-                        master.other().getMachineId() != machineId )
-                { // Join the existing cluster
-                    try
-                    {
-                        copyStoreFromMaster( master );
-                        getMessageLog().logMessage( "copied store from master" );
-                        exception = null;
-                        break;
-                    }
-                    catch ( Exception e )
-                    {
-                        exception = e;
-                        master = broker.getMasterReally( true );
-                        getMessageLog().logMessage( "Problems copying store from master", e );
-                    }
-                }
-                else if ( allowInit )
-                { // Try to initialize the cluster and become master
-                    exception = null;
-                    StoreId myStoreId = new StoreId();
-                    storeId = broker.createCluster( myStoreId );
-                    if ( storeId.equals( myStoreId ) )
-                    { // I am master
-                        break;
-                    }
-                }
-                // I am not master, and could not connect to the master:
-                // wait for other machine(s) to join.
-                sleepWithoutInterruption( 300, "Startup interrupted" );
-            }
-
-            if ( exception != null )
-            {
-                throw new RuntimeException( "Tried to join the cluster, but was unable to", exception );
-            }
-        }
-        newMaster( storeId, new Exception( "Starting up for the first time" ) );
-        localGraph();
     }
 
     private void sleepWithoutInterruption( long time, String errorMessage )
@@ -258,6 +263,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         catch ( InterruptedException e )
         {
+            Thread.interrupted();
             throw new RuntimeException( errorMessage, e );
         }
     }
@@ -310,7 +316,9 @@ public class HAGraphDb extends AbstractGraphDatabase
             result = condition.tryToFullfill();
             if ( result != null ) return result;
         }
-        throw condition.failure();
+        E failure = condition.failure();
+        if ( failure != null ) throw failure;
+        return result;
     }
 
     private BrokerFactory defaultBrokerFactory()
@@ -397,7 +405,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         return getClass().getSimpleName() + "[" + HaConfig.CONFIG_KEY_SERVER_ID + ":" + machineId + "]";
     }
 
-    protected synchronized void reevaluateMyself( StoreId storeId )
+    protected synchronized void reevaluateMyself()
     {
         Pair<Master, Machine> master = broker.getMasterReally( true );
         boolean iAmCurrentlyMaster = masterServer != null;
@@ -411,6 +419,13 @@ public class HAGraphDb extends AbstractGraphDatabase
                 if ( this.localGraph == null || !iAmCurrentlyMaster )
                 {   // I am currently a slave, so restart as master
                     internalShutdown( true );
+                    StoreId storeId = null;
+                    if ( noDb() )
+                    {
+                        if ( !allowInitCluster ) throw new ComException( "(Use another exception) was told to create cluster, but wasn't allowed" );
+                        storeId = createCluster();
+                        if ( storeId == null ) copyStoreFromMaster( master );
+                    }
                     newDb = startAsMaster( storeId );
                 }
                 // fire rebound event
@@ -423,7 +438,8 @@ public class HAGraphDb extends AbstractGraphDatabase
                 {   // I am currently master, so restart as slave.
                     // This will result in clearing of free ids from .id files, see SlaveIdGenerator.
                     internalShutdown( true );
-                    newDb = startAsSlave( storeId );
+                    if ( noDb() ) copyStoreFromMaster( master );
+                    newDb = startAsSlave( null );
                 }
                 else
                 {   // I am already a slave, so just forget the ids I got from the previous master
@@ -446,6 +462,11 @@ public class HAGraphDb extends AbstractGraphDatabase
             safelyShutdownDb( newDb );
             throw launderedException( t );
         }
+    }
+
+    private boolean noDb()
+    {
+        return !new File( getStoreDir(), NeoStore.DEFAULT_NAME ).exists();
     }
 
     private void safelyShutdownDb( EmbeddedGraphDbImpl newDb )
@@ -565,7 +586,7 @@ public class HAGraphDb extends AbstractGraphDatabase
             catch ( ComException e )
             {   // Maybe new master isn't up yet... let's wait a little and retry
                 failure = e;
-                sleeep( 500 );
+                sleepWithoutInterruption( 500, "Couldn't wait to new attempt of getting master id for tx from master" );
             }
         }
         if ( mastersMaster == null ) throw failure;
@@ -584,18 +605,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         getMessageLog().logMessage( "Master id for last committed tx ok with highestTxId=" +
             myLastCommittedTx + " with masterId=" + myMaster, true );
-    }
-
-    private void sleeep( int millis )
-    {
-        try
-        {
-            Thread.sleep( millis );
-        }
-        catch ( InterruptedException e )
-        {
-            Thread.interrupted();
-        }
     }
 
     private StoreId getStoreId( EmbeddedGraphDbImpl db )
@@ -781,29 +790,24 @@ public class HAGraphDb extends AbstractGraphDatabase
     @Override
     public void newMaster( Exception e )
     {
-        newMaster( null, e );
-    }
-
-    private synchronized void newMaster( StoreId storeId, Exception e )
-    {
         try
         {
-            doNewMaster( storeId, e );
+            doNewMaster( e );
         }
         catch ( BranchedDataException bde )
         {
             getMessageLog().logMessage( "Branched data occured, retrying" );
             getFreshDatabaseFromMaster();
-            doNewMaster( storeId, bde );
+            doNewMaster( bde );
         }
     }
 
-    private void doNewMaster( StoreId storeId, Exception e )
+    private void doNewMaster( Exception e )
     {
         try
         {
             getMessageLog().logMessage( "newMaster called", true );
-            reevaluateMyself( storeId );
+            reevaluateMyself();
         }
         catch ( ZooKeeperException ee )
         {
@@ -828,6 +832,17 @@ public class HAGraphDb extends AbstractGraphDatabase
             shutdown( t, false );
             throw Exceptions.launderedException( t );
         }
+    }
+
+    private StoreId createCluster()
+    {
+        StoreId myStoreId = new StoreId();
+        StoreId storeId = broker.createCluster( myStoreId );
+        return storeId.equals( myStoreId ) ?
+                // I am the first one here, so I'll create the db and the cluster in ZK
+                myStoreId :
+                // Someone else is the master, rather copy that store to here
+                null;
     }
 
     public MasterServer getMasterServerIfMaster()
@@ -929,6 +944,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 
         protected void moveAwayDb( HAGraphDb db, File branchedDataDir )
         {
+            if ( !new File( db.getStoreDir() ).exists() ) return;
             for ( File file : relevantDbFiles( db ) )
             {
                 File dest = new File( branchedDataDir, file.getName() );
@@ -989,4 +1005,27 @@ public class HAGraphDb extends AbstractGraphDatabase
             }
         }
     }
+    
+//    private class Ignitor extends Thread
+//    {
+//        private volatile boolean halted;
+//        
+//        @Override
+//        public void run()
+//        {
+//            int attempts = 0;
+//            while ( localGraph == null && attempts++ < 10 && !halted )
+//            {
+//                try
+//                {
+//                    newMaster( new Exception( "Starting up" ) );
+//                }
+//                catch ( Exception e )
+//                {
+//                    getMessageLog().logMessage( "Failed attempt to start up", e );
+//                    sleepWithoutInterruption( 500, "Couldn't wait for new attempt to startup" );
+//                }
+//            }
+//        }
+//    }
 }

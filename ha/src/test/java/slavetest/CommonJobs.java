@@ -22,6 +22,7 @@ package slavetest;
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.DynamicRelationshipType;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Lock;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.NotFoundException;
 import org.neo4j.graphdb.PropertyContainer;
@@ -872,6 +873,24 @@ public abstract class CommonJobs
                 throw new RuntimeException( e );
             }
             tx.success();
+            return null;
+        }
+    }
+    
+    public static class AcquireNodeLockAndReleaseManually extends TransactionalJob<Void>
+    {
+        private final long nodeId;
+
+        public AcquireNodeLockAndReleaseManually( long nodeId )
+        {
+            this.nodeId = nodeId;
+        }
+        
+        @Override
+        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        {
+            Lock lock = tx.acquireWriteLock( db.getNodeById( nodeId ) );
+            lock.release();
             return null;
         }
     }
