@@ -131,10 +131,29 @@ public class HAGraphDb extends AbstractGraphDatabase
         this.brokerFactory = brokerFactory != null ? brokerFactory : defaultBrokerFactory();
         this.broker = this.brokerFactory.create( this, config );
         this.allowInitCluster = HaConfig.getAllowInitFromConfig( config );
-        waitForCondition( new LocalGraphAvailableCondition()
+        new Thread()
         {
-            public RuntimeException failure() { return null; };
-        }, 5000 );
+            public void run()
+            {
+                while ( localGraph == null )
+                {
+                    try
+                    {
+                        newMaster( new Exception( "startup" ) );
+                    }
+                    catch ( Throwable e )
+                    {
+                        e.printStackTrace();
+                        sleepWithoutInterruption( 500, "yo" );
+                    }
+                }
+            }
+        }.start();
+//        waitForCondition( new LocalGraphAvailableCondition()
+//        {
+//            public RuntimeException failure() { return null; };
+//        }, 5000 );
+//        sleepWithoutInterruption( 5000, "sk" );
     }
 
     private void initializeTxManagerKernelPanicEventHandler()
@@ -295,12 +314,13 @@ public class HAGraphDb extends AbstractGraphDatabase
     private EmbeddedGraphDbImpl localGraph()
     {
         if ( localGraph != null ) return localGraph;
-        return waitForCondition( new LocalGraphAvailableCondition(), ( HaConfig.getClientReadTimeoutFromConfig( config )-5)*1000 );
+        int secondsWait = Math.max( HaConfig.getClientReadTimeoutFromConfig( config )-5, 5 );
+        return waitForCondition( new LocalGraphAvailableCondition(), secondsWait*1000 );
     }
 
     private <T,E extends Exception> T waitForCondition( Condition<T,E> condition, int timeMillis ) throws E
     {
-        long endTime = System.currentTimeMillis();
+        long endTime = System.currentTimeMillis()+timeMillis;
         T result = condition.tryToFullfill();
         while ( result == null && System.currentTimeMillis() < endTime )
         {
@@ -438,7 +458,10 @@ public class HAGraphDb extends AbstractGraphDatabase
                 {   // I am currently master, so restart as slave.
                     // This will result in clearing of free ids from .id files, see SlaveIdGenerator.
                     internalShutdown( true );
-                    if ( noDb() ) copyStoreFromMaster( master );
+                    if ( noDb() )
+                    {
+                        copyStoreFromMaster( master );
+                    }
                     newDb = startAsSlave( null );
                 }
                 else
