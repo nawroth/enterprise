@@ -19,16 +19,6 @@
  */
 package org.neo4j.kernel.ha.zookeeper;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.util.Map;
-
-import javax.management.remote.JMXServiceURL;
-
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HaConfig;
@@ -43,25 +33,31 @@ import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.management.Neo4jManager;
 
+import javax.management.remote.JMXServiceURL;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketAddress;
+import java.util.Map;
+
 public class ZooKeeperBroker extends AbstractBroker
 {
-    // Connect timeout to zk instance for fetching info, in ms
-    private static final int FETCH_INFO_TIMEOUT = 500;
-
     private final ZooClient zooClient;
     private final String haServer;
     private int clientLockReadTimeout;
-    private final String clusterName;
     private Map<String, String> config;
+    private int fetchInfoTimeout;
 
     public ZooKeeperBroker( AbstractGraphDatabase graphDb, Map<String, String> config, ResponseReceiver receiver )
     {
         super( HaConfig.getMachineIdFromConfig( config ), graphDb );
         this.config = config;
-        this.clusterName = HaConfig.getClusterNameFromConfig( config );
-        this.haServer = HaConfig.getHaServerFromConfig( config );
-        this.clientLockReadTimeout = HaConfig.getClientLockReadTimeoutFromConfig( config );
-        this.zooClient = new ZooClient( graphDb, config, receiver );
+        haServer = HaConfig.getHaServerFromConfig( config );
+        clientLockReadTimeout = HaConfig.getClientLockReadTimeoutFromConfig( config );
+        fetchInfoTimeout = HaConfig.getFetchInfoTimeoutFromConfig( config );
+        zooClient = new ZooClient( graphDb, config, receiver );
     }
 
     @Override
@@ -100,7 +96,7 @@ public class ZooKeeperBroker extends AbstractBroker
              * want to block the main thread in such a case, just fail.
              */
             Socket soc = new Socket();
-            soc.connect( sockAddr, FETCH_INFO_TIMEOUT );
+            soc.connect( sockAddr, fetchInfoTimeout );
 
             BufferedReader in = new BufferedReader( new InputStreamReader( soc.getInputStream() ) );
             try
@@ -132,9 +128,9 @@ public class ZooKeeperBroker extends AbstractBroker
     }
 
     @Override
-    public StoreId createCluster( StoreId storeIdSuggestion )
+    public StoreId getClusterStoreId()
     {
-        return zooClient.createCluster( clusterName, storeIdSuggestion );
+        return zooClient.getClusterStoreId();
     }
 
     @Override
@@ -231,5 +227,10 @@ public class ZooKeeperBroker extends AbstractBroker
     public void notifyMasterChange( Machine newMaster )
     {
         zooClient.setDataChangeWatcher( ZooClient.MASTER_NOTIFY_CHILD, newMaster.getMachineId() );
+    }
+
+    protected ZooClient getZooClient()
+    {
+        return zooClient;
     }
 }

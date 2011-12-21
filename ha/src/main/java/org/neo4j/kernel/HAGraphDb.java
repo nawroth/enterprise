@@ -19,6 +19,23 @@
  */
 package org.neo4j.kernel;
 
+import static org.neo4j.helpers.Exceptions.launderedException;
+import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
+import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
+
+import java.io.File;
+import java.io.FileFilter;
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
 import org.neo4j.com.ComException;
 import org.neo4j.com.MasterUtil;
 import org.neo4j.com.Response;
@@ -61,33 +78,12 @@ import org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.kernel.impl.util.StringLogger;
 
-import java.io.File;
-import java.io.FileFilter;
-import java.io.IOException;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
-
-import static java.lang.Math.max;
-import static org.neo4j.helpers.Exceptions.launderedException;
-import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
-import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
-import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHistoryFileNamePattern;
-import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHistoryLogVersion;
-
 public class HAGraphDb extends AbstractGraphDatabase
         implements GraphDatabaseService, ResponseReceiver
 {
     private final Map<String, String> config;
     private final BrokerFactory brokerFactory;
-    private final Broker broker;
+    private Broker broker;
     private volatile EmbeddedGraphDbImpl localGraph;
     private final int machineId;
     private volatile MasterServer masterServer;
@@ -213,8 +209,9 @@ public class HAGraphDb extends AbstractGraphDatabase
             {
                 // Check if the cluster is up
                 Pair<Master, Machine> master = broker.getMasterReally( true );
-                if ( master != null && master.first() != null )
-                { // Join the existing cluster
+                if ( master != null && !master.other().equals( Machine.NO_MACHINE ) &&
+                        master.other().getMachineId() != machineId )
+                {   // Join the existing cluster
                     try
                     {
                         copyStoreFromMaster( master );
@@ -229,15 +226,11 @@ public class HAGraphDb extends AbstractGraphDatabase
                         getMessageLog().logMessage( "Problems copying store from master", e );
                     }
                 }
-                else if ( allowInit )
-                { // Try to initialize the cluster and become master
-                    exception = null;
-                    StoreId myStoreId = new StoreId();
-                    storeId = broker.createCluster( myStoreId );
-                    if ( storeId.equals( myStoreId ) )
-                    { // I am master
-                        break;
-                    }
+                else
+                {   // I seem to be the master, the broker have created the cluster for me
+                    // I'm just going to start up now
+                    storeId = broker.getClusterStoreId();
+                    break;
                 }
                 // I am not master, and could not connect to the master:
                 // wait for other machine(s) to join.
@@ -286,39 +279,23 @@ public class HAGraphDb extends AbstractGraphDatabase
 
     private long highestLogVersion()
     {
-        Pattern logFilePattern = getHistoryFileNamePattern( LOGICAL_LOG_DEFAULT_NAME );
-        long highest = -1;
-        for ( File file : new File( getStoreDir() ).listFiles() )
-        {
-            if ( logFilePattern.matcher( file.getName() ).matches() )
-            {
-                highest = max( highest, getHistoryLogVersion( file ) );
-            }
-        }
-        return highest;
+        return XaLogicalLog.getHighestHistoryLogVersion( new File( getStoreDir() ), LOGICAL_LOG_DEFAULT_NAME );
     }
 
     private EmbeddedGraphDbImpl localGraph()
     {
         if ( localGraph != null ) return localGraph;
-        return waitForCondition( new LocalGraphAvailableCondition(), ( HaConfig.getClientReadTimeoutFromConfig( config )-5)*1000 );
+        int secondsWait = Math.max( HaConfig.getClientReadTimeoutFromConfig( config )-5, 5 );
+        return waitForCondition( new LocalGraphAvailableCondition(), secondsWait*1000 );
     }
 
     private <T,E extends Exception> T waitForCondition( Condition<T,E> condition, int timeMillis ) throws E
     {
-        long endTime = System.currentTimeMillis();
+        long endTime = System.currentTimeMillis()+timeMillis;
         T result = condition.tryToFullfill();
         while ( result == null && System.currentTimeMillis() < endTime )
         {
-            try
-            {
-                // TODO Naive implementation
-                Thread.sleep( 1 );
-            }
-            catch ( InterruptedException e )
-            {
-                Thread.interrupted();
-            }
+            sleepWithoutInterruption( 1, "Failed waiting for " + condition + " to be fulfilled" );
             result = condition.tryToFullfill();
             if ( result != null ) return result;
         }
@@ -365,9 +342,9 @@ public class HAGraphDb extends AbstractGraphDatabase
                     newMaster( new NullPointerException(
                             "master returned from broker" ) );
                 }
-            }
-            receive( broker.getMaster().first().pullUpdates(
+                receive( broker.getMaster().first().pullUpdates(
                         getSlaveContext( -1 ) ) );
+            }
         }
         catch ( ZooKeeperException e )
         {
@@ -406,7 +383,25 @@ public class HAGraphDb extends AbstractGraphDatabase
     @Override
     public String toString()
     {
-        return getClass().getSimpleName() + "[" + HaConfig.CONFIG_KEY_SERVER_ID + ":" + machineId + "]";
+        return getClass().getSimpleName() + "[" + getStoreDir() + ", " + HaConfig.CONFIG_KEY_SERVER_ID + ":" + machineId + "]";
+    }
+
+    /**
+     * Shuts down the broker, invalidating every connection to the zookeeper
+     * cluster and starts it again. Should be called in case a ConnectionExpired
+     * event is received, this is the equivalent of building the ZK connection
+     * from start. Also triggers a master reelect, to make sure that the state
+     * ZK ended up in during our absence is respected.
+     */
+    @Override
+    public void reconnect( Exception e )
+    {
+        if ( broker != null )
+        {
+            broker.shutdown();
+        }
+        this.broker = brokerFactory.create( this, config );
+        newMaster( e );
     }
 
     protected synchronized void reevaluateMyself( StoreId storeId )
@@ -577,7 +572,7 @@ public class HAGraphDb extends AbstractGraphDatabase
             catch ( ComException e )
             {   // Maybe new master isn't up yet... let's wait a little and retry
                 failure = e;
-                sleeep( 500 );
+                sleepWithoutInterruption( 500, "Failed waiting for next attempt to contact master" );
             }
         }
         if ( mastersMaster == null ) throw failure;
@@ -596,18 +591,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         getMessageLog().logMessage( "Master id for last committed tx ok with highestTxId=" +
             myLastCommittedTx + " with masterId=" + myMaster, true );
-    }
-
-    private void sleeep( int millis )
-    {
-        try
-        {
-            Thread.sleep( millis );
-        }
-        catch ( InterruptedException e )
-        {
-            Thread.interrupted();
-        }
     }
 
     private StoreId getStoreId( EmbeddedGraphDbImpl db )
@@ -698,7 +681,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         if ( this.updatePuller != null )
         {
             getMessageLog().logMessage( "Internal shutdown updatePuller", true );
-            this.updatePuller.shutdown();
+            this.updatePuller.shutdownNow();
             getMessageLog().logMessage( "Internal shutdown updatePuller DONE", true );
             this.updatePuller = null;
         }
@@ -982,10 +965,10 @@ public class HAGraphDb extends AbstractGraphDatabase
     private interface Condition<T, E extends Exception>
     {
         T tryToFullfill();
-        
+
         E failure();
     }
-    
+
     private class LocalGraphAvailableCondition implements Condition<EmbeddedGraphDbImpl, RuntimeException>
     {
         @Override
@@ -993,7 +976,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         {
             return localGraph;
         }
-        
+
         public RuntimeException failure()
         {
             if ( causeOfShutdown != null )
