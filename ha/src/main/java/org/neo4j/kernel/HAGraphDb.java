@@ -649,6 +649,12 @@ public class HAGraphDb extends AbstractGraphDatabase
     }
     
     @Override
+    public Node getReferenceNodeIfExists( String name )
+    {
+        return localGraph().getReferenceNode( name );
+    }
+
+    @Override
     public Node getReferenceNode( String name )
     {
         return localGraph().getReferenceNode( name );

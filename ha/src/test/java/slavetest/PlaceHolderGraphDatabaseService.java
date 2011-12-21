@@ -83,6 +83,12 @@ public class PlaceHolderGraphDatabaseService extends AbstractGraphDatabase
     }
 
     @Override
+    public Node getReferenceNodeIfExists( String name )
+    {
+        return db.getReferenceNodeIfExists( name );
+    }
+    
+    @Override
     protected void close()
     {
         db.shutdown();
