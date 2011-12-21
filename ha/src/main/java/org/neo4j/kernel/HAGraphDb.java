@@ -60,6 +60,7 @@ import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.ha.MasterIdGeneratorFactory;
 import org.neo4j.kernel.ha.MasterServer;
 import org.neo4j.kernel.ha.MasterTxHook;
+import org.neo4j.kernel.ha.SlaveReferenceNodeCreator;
 import org.neo4j.kernel.ha.MasterTxIdGenerator.MasterTxIdGeneratorFactory;
 import org.neo4j.kernel.ha.ResponseReceiver;
 import org.neo4j.kernel.ha.SlaveIdGenerator.SlaveIdGeneratorFactory;
@@ -528,6 +529,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                 new SlaveLockManagerFactory( broker, this ),
                 new SlaveIdGeneratorFactory( broker, this ),
                 new SlaveRelationshipTypeCreator( broker, this ),
+                new SlaveReferenceNodeCreator( broker, null ),
                 new SlaveTxIdGeneratorFactory( broker, this ),
                 new SlaveTxHook( broker, this ),
                 slaveUpdateMode.createUpdater( broker ),
@@ -545,6 +547,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                 CommonFactories.defaultLockManagerFactory(),
                 new MasterIdGeneratorFactory(),
                 CommonFactories.defaultRelationshipTypeCreator(),
+                CommonFactories.defaultReferenceNodeCreator(),
                 new MasterTxIdGeneratorFactory( broker ),
                 new MasterTxHook(),
                 new ZooKeeperLastCommittedTxIdSetter( broker ),

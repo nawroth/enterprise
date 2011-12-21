@@ -23,6 +23,9 @@ import java.io.IOException;
 
 import org.jboss.netty.buffer.ChannelBuffer;
 
+/**
+ * Serializes a response object from master to a {@link ChannelBuffer}.
+ */
 public interface ObjectSerializer<T>
 {
     void write( T responseObject, ChannelBuffer result ) throws IOException;

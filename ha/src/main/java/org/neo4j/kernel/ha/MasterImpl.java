@@ -38,6 +38,7 @@ import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.IdType;
 import org.neo4j.kernel.impl.core.LockReleaser;
 import org.neo4j.kernel.impl.nioneo.store.IdGenerator;
+import org.neo4j.kernel.impl.nioneo.store.NameData;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.transaction.IllegalResourceException;
 import org.neo4j.kernel.impl.transaction.LockManager;
@@ -425,6 +426,13 @@ public class MasterImpl implements Master
         return packResponse( context, config.getRelationshipTypeHolder().getIdFor( name ) );
     }
 
+    public Response<NameData<Long>> createReferenceNode( SlaveContext context, String name )
+    {
+        Config config = getGraphDbConfig();
+        NameData<Long> result = config.getReferenceNodeHolder().getOrCreate( name );
+        return packResponse( context, result );
+    }
+    
     public Response<Void> pullUpdates( SlaveContext context )
     {
         return packResponse( context, null );

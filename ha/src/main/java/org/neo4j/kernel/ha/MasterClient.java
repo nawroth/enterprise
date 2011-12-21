@@ -51,6 +51,7 @@ import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.IdType;
 import org.neo4j.kernel.impl.nioneo.store.IdRange;
+import org.neo4j.kernel.impl.nioneo.store.NameData;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
 /**
@@ -72,6 +73,21 @@ public class MasterClient extends Client<Master> implements Master
             }
         }
     };
+    protected static class StringSerializer implements Serializer
+    {
+        private final String string;
+
+        public StringSerializer( String string )
+        {
+            this.string = string;
+        }
+        
+        @Override
+        public void write( ChannelBuffer buffer, ByteBuffer readBuffer ) throws IOException
+        {
+            writeString( buffer, string );
+        }
+    };
     protected static final Deserializer<LockResult> LOCK_RESULT_DESERIALIZER = new Deserializer<LockResult>()
     {
         public LockResult read( ChannelBuffer buffer, ByteBuffer temporaryBuffer ) throws IOException
@@ -81,6 +97,39 @@ public class MasterClient extends Client<Master> implements Master
                     status );
         }
     };
+    protected static final Deserializer<Integer> INTEGER_DESERIALIZER = new Deserializer<Integer>()
+    {
+        public Integer read( ChannelBuffer buffer, ByteBuffer temporaryBuffer ) throws IOException
+        {
+            return buffer.readInt();
+        }
+    };
+    protected static class ReferenceNodeDeserializer implements Deserializer<NameData<Long>>
+    {
+        private final String name;
+
+        public ReferenceNodeDeserializer( String name )
+        {
+            this.name = name;
+        }
+
+        @Override
+        public NameData<Long> read( ChannelBuffer buffer, ByteBuffer temporaryBuffer )
+                throws IOException
+        {
+            return new NameData<Long>( buffer.readInt(), name, buffer.readLong() );
+        }
+    }
+    protected static final ObjectSerializer<NameData<Long>> REFERENCE_NODE_SERIALIZER = new ObjectSerializer<NameData<Long>>()
+    {
+        @Override
+        public void write( NameData<Long> responseObject, ChannelBuffer result ) throws IOException
+        {
+            result.writeInt( responseObject.getId() );
+            result.writeLong( responseObject.getPayload() );
+        }
+    };
+    
     private final int lockReadTimeout;
 
     public MasterClient( String hostNameOrIp, int port, AbstractGraphDatabase graphDb,
@@ -121,22 +170,16 @@ public class MasterClient extends Client<Master> implements Master
         } );
     }
 
-    public Response<Integer> createRelationshipType( SlaveContext context, final String name )
+    public Response<Integer> createRelationshipType( SlaveContext context, String name )
     {
-        return sendRequest( HaRequestType.CREATE_RELATIONSHIP_TYPE, context, new Serializer()
-        {
-            public void write( ChannelBuffer buffer, ByteBuffer readBuffer ) throws IOException
-            {
-                writeString( buffer, name );
-            }
-        }, new Deserializer<Integer>()
-        {
-            @SuppressWarnings( "boxing" )
-            public Integer read( ChannelBuffer buffer, ByteBuffer temporaryBuffer ) throws IOException
-            {
-                return buffer.readInt();
-            }
-        } );
+        return sendRequest( HaRequestType.CREATE_RELATIONSHIP_TYPE, context, new StringSerializer( name ),
+                INTEGER_DESERIALIZER );
+    }
+    
+    public Response<NameData<Long>> createReferenceNode( SlaveContext context, final String name )
+    {
+        return sendRequest( HaRequestType.CREATE_REFERENCE_NODE, context, new StringSerializer( name ),
+                new ReferenceNodeDeserializer( name ) );
     }
     
     @Override
@@ -466,8 +509,17 @@ public class MasterClient extends Client<Master> implements Master
             {
                 return true;
             }
-        };
+        },
 
+        CREATE_REFERENCE_NODE( new MasterCaller<Master, NameData<Long>>()
+        {
+            public Response<NameData<Long>> callMaster( Master master, SlaveContext context,
+                    ChannelBuffer input, ChannelBuffer target )
+            {
+                return master.createReferenceNode( context, readString( input ) );
+            }
+        }, REFERENCE_NODE_SERIALIZER, true );
+        
         @SuppressWarnings( "rawtypes" )
         final MasterCaller caller;
         @SuppressWarnings( "rawtypes" )
@@ -482,12 +534,6 @@ public class MasterClient extends Client<Master> implements Master
             this.includesSlaveContext = includesSlaveContext;
         }
         
-        protected int timeoutForLocking( int defaultTimeout )
-        {
-            // TODO Auto-generated method stub
-            return 0;
-        }
-
         public ObjectSerializer getObjectSerializer()
         {
             return serializer;

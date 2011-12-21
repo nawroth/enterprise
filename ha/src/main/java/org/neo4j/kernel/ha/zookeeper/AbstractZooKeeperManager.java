@@ -42,6 +42,7 @@ import org.neo4j.kernel.ha.IdAllocation;
 import org.neo4j.kernel.ha.LockResult;
 import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.ha.MasterClient;
+import org.neo4j.kernel.impl.nioneo.store.NameData;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 
@@ -335,6 +336,12 @@ public abstract class AbstractZooKeeperManager implements Watcher
         
         @Override
         public Response<Integer> createRelationshipType( SlaveContext context, String name )
+        {
+            throw noMasterException();
+        }
+        
+        @Override
+        public Response<NameData<Long>> createReferenceNode( SlaveContext context, String name )
         {
             throw noMasterException();
         }

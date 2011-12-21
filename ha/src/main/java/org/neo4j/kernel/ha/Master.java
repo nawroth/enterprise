@@ -25,6 +25,7 @@ import org.neo4j.com.StoreWriter;
 import org.neo4j.com.TxExtractor;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.IdType;
+import org.neo4j.kernel.impl.nioneo.store.NameData;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
 /**
@@ -36,6 +37,8 @@ public interface Master
     Response<IdAllocation> allocateIds( IdType idType );
 
     Response<Integer> createRelationshipType( SlaveContext context, String name );
+    
+    Response<NameData<Long>> createReferenceNode( SlaveContext context, String name );
     
     /**
      * Called when the first write operation of lock is performed for a transaction.
