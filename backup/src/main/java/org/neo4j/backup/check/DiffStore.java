@@ -88,8 +88,8 @@ public class DiffStore extends StoreAccess implements CommandRecordVisitor
         record = getNodeStore().forceGetRaw( record.getId() );
         if ( record.inUse() )
         {
-            markProperty( record.getNextProp() );
-            markRelationship( record.getNextRel() );
+            markProperty( record.getFirstProp() );
+            markRelationship( record.getFirstRel() );
         }
     }
 
@@ -100,13 +100,13 @@ public class DiffStore extends StoreAccess implements CommandRecordVisitor
         record = getRelationshipStore().forceGetRaw( record.getId() );
         if ( record.inUse() )
         {
-            getNodeStore().markDirty( record.getFirstNode() );
-            getNodeStore().markDirty( record.getSecondNode() );
-            markProperty( record.getNextProp() );
-            markRelationship( record.getFirstNextRel() );
-            markRelationship( record.getFirstPrevRel() );
-            markRelationship( record.getSecondNextRel() );
-            markRelationship( record.getSecondPrevRel() );
+            getNodeStore().markDirty( record.getStartNode() );
+            getNodeStore().markDirty( record.getEndNode() );
+            markProperty( record.getFirstProp() );
+            markRelationship( record.getStartNodeNextRel() );
+            markRelationship( record.getStartNodePrevRel() );
+            markRelationship( record.getEndNodeNextRel() );
+            markRelationship( record.getEndNodePrevRel() );
         }
     }
 

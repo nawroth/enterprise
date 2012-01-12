@@ -412,22 +412,22 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             NodeRecord old = nodes.forceGetRaw( node.getId() );
             if ( old.inUse() ) // Check that referenced records are also removed
             {
-                if ( !Record.NO_NEXT_RELATIONSHIP.value( old.getNextRel() ) )
+                if ( !Record.NO_NEXT_RELATIONSHIP.value( old.getFirstRel() ) )
                 { // NOTE: with reuse in the same tx this check is invalid
-                    RelationshipRecord rel = rels.forceGetRecord( old.getNextRel() );
+                    RelationshipRecord rel = rels.forceGetRecord( old.getFirstRel() );
                     if ( rel.inUse() ) fail |= inconsistent( nodes, node, rels, rel, RELATIONSHIP_NOT_REMOVED_FOR_DELETED_NODE );
                 }
                 checkPropertyReference( node, nodes, new OwningNode( node.getId() ) );
             }
             return fail;
         }
-        long relId = node.getNextRel();
+        long relId = node.getFirstRel();
         if ( !Record.NO_NEXT_RELATIONSHIP.value( relId ) )
         {
             RelationshipRecord rel = rels.forceGetRecord( relId );
             if ( !rel.inUse() )
                 fail |= inconsistent( nodes, node, rels, rel, RELATIONSHIP_NOT_IN_USE );
-            else if ( !( rel.getFirstNode() == node.getId() || rel.getSecondNode() == node.getId() ) )
+            else if ( !( rel.getStartNode() == node.getId() || rel.getEndNode() == node.getId() ) )
                 fail |= inconsistent( nodes, node, rels, rel, RELATIONSHIP_FOR_OTHER_NODE );
         }
         fail |= checkPropertyReference( node, nodes, new OwningNode( node.getId() ) );
@@ -441,9 +441,9 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
         {
             if ( primitive.inUse() )
             {
-                if ( !Record.NO_NEXT_PROPERTY.value( primitive.getNextProp() ) )
+                if ( !Record.NO_NEXT_PROPERTY.value( primitive.getFirstProp() ) )
                 {
-                    PropertyRecord prop = props.forceGetRecord( primitive.getNextProp() );
+                    PropertyRecord prop = props.forceGetRecord( primitive.getFirstProp() );
                     fail |= checkPropertyOwner( prop, owner );
                     if ( !prop.inUse() )
                         fail |= inconsistent( store, primitive, props, prop, PROPERTY_NOT_IN_USE );
@@ -455,9 +455,9 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             else
             {
                 R old = store.forceGetRaw( primitive.getId() );
-                if ( !Record.NO_NEXT_PROPERTY.value( old.getNextProp() ) )
+                if ( !Record.NO_NEXT_PROPERTY.value( old.getFirstProp() ) )
                 { // NOTE: with reuse in the same tx this check is invalid
-                    PropertyRecord prop = props.forceGetRecord( old.getNextProp() );
+                    PropertyRecord prop = props.forceGetRecord( old.getFirstProp() );
                     if ( prop.inUse() )
                         fail |= inconsistent( store, primitive, props, prop, owner.propertyNotRemoved() );
                 }
@@ -483,7 +483,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
                         if (nodeId != null)
                         {
                             NodeRecord node = nodes.forceGetRecord( nodeId );
-                            if (node.inUse() && node.getNextRel() == old.getId())
+                            if (node.inUse() && node.getFirstRel() == old.getId())
                                 fail |= inconsistent( rels, rel, nodes, node, REMOVED_RELATIONSHIP_STILL_REFERENCED );
                         }
                     }
@@ -513,7 +513,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
                 if ( nodeId != null )
                 {
                     NodeRecord node = nodes.forceGetRecord( nodeId );
-                    if ( !node.inUse() || node.getNextRel() != rel.getId() )
+                    if ( !node.inUse() || node.getFirstRel() != rel.getId() )
                         fail |= inconsistent( rels, rel, nodes, node, field.noBackReference );
                 }
             }
@@ -678,7 +678,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             PrimitiveRecord owner = property.inUse() ? store.forceGetRecord( ownerId ) : store.forceGetRaw( ownerId );
             List<PropertyRecord> chain = new ArrayList<PropertyRecord>( 2 );
             PropertyRecord prop = null;
-            for ( long propId = owner.getNextProp(), target = property.getId(); propId != target; propId = prop.getNextProp() )
+            for ( long propId = owner.getFirstProp(), target = property.getId(); propId != target; propId = prop.getNextProp() )
             {
                 if ( Record.NO_NEXT_PROPERTY.value( propId ) )
                 {
@@ -702,14 +702,14 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
         {
             if ( entity.inUse() )
             {
-                if ( entity.getNextProp() == property.getId() )
+                if ( entity.getFirstProp() == property.getId() )
                     fail |= inconsistent( props, property, entityStore, entity, REMOVED_PROPERTY_STILL_REFERENCED );
             }
             return fail;
         }
         if ( !entity.inUse() )
             fail |= inconsistent( props, property, entityStore, entity, OWNER_NOT_IN_USE );
-        else if ( entity.getNextProp() != property.getId() )
+        else if ( entity.getFirstProp() != property.getId() )
             fail |= inconsistent( props, property, entityStore, entity, OWNER_DOES_NOT_REFERENCE_BACK );
         if ( entityStore instanceof DiffRecordStore<?> )
         {
@@ -718,11 +718,11 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             {
                 PrimitiveRecord old = diffs.forceGetRaw( entity.getId() );
                 // IF old is in use and references a property record
-                if ( old.inUse() && !Record.NO_NEXT_PROPERTY.value( old.getNextProp() ) )
+                if ( old.inUse() && !Record.NO_NEXT_PROPERTY.value( old.getFirstProp() ) )
                     // AND that property record is not the same as this property record
-                    if ( old.getNextProp() != property.getId() )
+                    if ( old.getFirstProp() != property.getId() )
                         // THEN that property record must also have been updated!
-                        if ( !( (DiffRecordStore<?>) props ).isModified( old.getNextProp() ) )
+                        if ( !( (DiffRecordStore<?>) props ).isModified( old.getFirstProp() ) )
                             fail |= inconsistent( props, property, entityStore, entity, REPLACED_PROPERTY );
             }
         }
@@ -851,7 +851,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             @Override
             long get( RelationshipRecord rel )
             {
-                return rel.getFirstNode();
+                return rel.getStartNode();
             }
         },
         SECOND( TARGET_NODE_INVALID, TARGET_NODE_NOT_IN_USE )
@@ -859,7 +859,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             @Override
             long get( RelationshipRecord rel )
             {
-                return rel.getSecondNode();
+                return rel.getEndNode();
             }
         };
         private final ReferenceInconsistency invalidReference, notInUse;
@@ -881,15 +881,15 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             @Override
             long relOf( RelationshipRecord rel )
             {
-                return rel.getFirstNextRel();
+                return rel.getStartNodeNextRel();
             }
 
             @Override
             boolean invConsistent( RelationshipRecord rel, RelationshipRecord other )
             {
                 long node = getNode( rel );
-                if ( other.getFirstNode() == node ) return other.getFirstPrevRel() == rel.getId();
-                if ( other.getSecondNode() == node ) return other.getSecondPrevRel() == rel.getId();
+                if ( other.getStartNode() == node ) return other.getStartNodePrevRel() == rel.getId();
+                if ( other.getEndNode() == node ) return other.getEndNodePrevRel() == rel.getId();
                 return false;
             }
         },
@@ -899,7 +899,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             @Override
             long relOf( RelationshipRecord rel )
             {
-                return rel.getFirstPrevRel();
+                return rel.getStartNodePrevRel();
             }
 
             @Override
@@ -912,8 +912,8 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             boolean invConsistent( RelationshipRecord rel, RelationshipRecord other )
             {
                 long node = getNode( rel );
-                if ( other.getFirstNode() == node ) return other.getFirstNextRel() == rel.getId();
-                if ( other.getSecondNode() == node ) return other.getSecondNextRel() == rel.getId();
+                if ( other.getStartNode() == node ) return other.getStartNodeNextRel() == rel.getId();
+                if ( other.getEndNode() == node ) return other.getEndNodeNextRel() == rel.getId();
                 return false;
             }
         },
@@ -922,15 +922,15 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             @Override
             long relOf( RelationshipRecord rel )
             {
-                return rel.getSecondNextRel();
+                return rel.getEndNodeNextRel();
             }
 
             @Override
             boolean invConsistent( RelationshipRecord rel, RelationshipRecord other )
             {
                 long node = getNode( rel );
-                if ( other.getFirstNode() == node ) return other.getFirstPrevRel() == rel.getId();
-                if ( other.getSecondNode() == node ) return other.getSecondPrevRel() == rel.getId();
+                if ( other.getStartNode() == node ) return other.getStartNodePrevRel() == rel.getId();
+                if ( other.getEndNode() == node ) return other.getEndNodePrevRel() == rel.getId();
                 return false;
             }
         },
@@ -940,7 +940,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             @Override
             long relOf( RelationshipRecord rel )
             {
-                return rel.getSecondPrevRel();
+                return rel.getEndNodePrevRel();
             }
 
             @Override
@@ -953,8 +953,8 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             boolean invConsistent( RelationshipRecord rel, RelationshipRecord other )
             {
                 long node = getNode( rel );
-                if ( other.getFirstNode() == node ) return other.getFirstNextRel() == rel.getId();
-                if ( other.getSecondNode() == node ) return other.getSecondNextRel() == rel.getId();
+                if ( other.getStartNode() == node ) return other.getStartNodeNextRel() == rel.getId();
+                if ( other.getEndNode() == node ) return other.getEndNodeNextRel() == rel.getId();
                 return false;
             }
         };
@@ -976,7 +976,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
 
         long getNode( RelationshipRecord rel )
         {
-            return first ? rel.getFirstNode() : rel.getSecondNode();
+            return first ? rel.getStartNode() : rel.getEndNode();
         }
 
         abstract long relOf( RelationshipRecord rel );
