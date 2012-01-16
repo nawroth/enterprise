@@ -75,6 +75,7 @@ import java.util.List;
 import org.neo4j.backup.check.InconsistencyType.ReferenceInconsistency;
 import org.neo4j.helpers.Args;
 import org.neo4j.helpers.ProgressIndicator;
+import org.neo4j.kernel.EmbeddedGraphDatabase;
 import org.neo4j.kernel.impl.nioneo.store.AbstractBaseRecord;
 import org.neo4j.kernel.impl.nioneo.store.DynamicRecord;
 import org.neo4j.kernel.impl.nioneo.store.NodeRecord;
@@ -124,14 +125,15 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             System.exit( -1 );
             return;
         }
-        StoreAccess stores = new StoreAccess( args[0] );
+        EmbeddedGraphDatabase graphdb = new EmbeddedGraphDatabase( args[ 0 ] );
+        StoreAccess stores = new StoreAccess( graphdb );
         try
         {
             run( stores, propowner );
         }
         finally
         {
-            stores.close();
+            graphdb.shutdown();
         }
     }
 
@@ -383,7 +385,10 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
     @Override
     public void processString( RecordStore<DynamicRecord> store, DynamicRecord string )
     {
-        if ( checkDynamic( store, string ) ) brokenStrings++;
+        if ( checkDynamic( store, string ) )
+        {
+            brokenStrings++;
+        }
     }
 
     @Override

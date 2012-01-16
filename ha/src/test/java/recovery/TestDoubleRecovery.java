@@ -86,10 +86,10 @@ public class TestDoubleRecovery extends AbstractSubProcessTestBase
         OnlineBackup.from( "localhost" ).incremental( backupDirectory );
         run( new Verification() );
 
-        GraphDatabaseService db = new EmbeddedGraphDatabase( backupDirectory );
+        EmbeddedGraphDatabase db = new EmbeddedGraphDatabase( backupDirectory );
         try
         {
-            new Verification().run( (AbstractGraphDatabase) db );
+            new Verification().run( db );
         }
         finally
         {
@@ -100,7 +100,7 @@ public class TestDoubleRecovery extends AbstractSubProcessTestBase
     static class WriteTransaction implements Task
     {
         @Override
-        public void run( AbstractGraphDatabase graphdb )
+        public void run( EmbeddedGraphDatabase graphdb )
         {
             Transaction tx = graphdb.beginTx();
             Node node;
@@ -132,7 +132,7 @@ public class TestDoubleRecovery extends AbstractSubProcessTestBase
     static class Write1PCTransaction implements Task
     {
         @Override
-        public void run( AbstractGraphDatabase graphdb )
+        public void run( EmbeddedGraphDatabase graphdb )
         {
             Transaction tx = graphdb.beginTx();
             Node node;
@@ -162,7 +162,7 @@ public class TestDoubleRecovery extends AbstractSubProcessTestBase
     static class Crash implements Task
     {
         @Override
-        public void run( AbstractGraphDatabase graphdb )
+        public void run( EmbeddedGraphDatabase graphdb )
         {
             throw new AssertionError( "Should not reach here - the breakpoint should avoid it" );
         }
@@ -171,7 +171,7 @@ public class TestDoubleRecovery extends AbstractSubProcessTestBase
     static class Verification implements Task
     {
         @Override
-        public void run( AbstractGraphDatabase graphdb )
+        public void run( EmbeddedGraphDatabase graphdb )
         {
             assertNotNull( "No graph database", graphdb );
             Index<Node> index = graphdb.index().forNodes( "nodes" );

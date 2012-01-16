@@ -21,14 +21,17 @@ package slavetest;
 
 import org.junit.After;
 import org.junit.Ignore;
+import org.neo4j.com.Client;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.Config;
+import org.neo4j.kernel.ConfigProxy;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
-import org.neo4j.kernel.HAGraphDb;
-import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
+import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.Broker;
 import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.FakeSlaveBroker;
@@ -40,109 +43,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import org.neo4j.kernel.ha.zookeeper.ZooClient;
 
 @Ignore( "SingleJvmWithNettyTest covers this and more" )
 public class SingleJvmTest extends AbstractHaTest
 {
     private MasterImpl master;
-    private List<GraphDatabaseService> haDbs;
-
-    protected GraphDatabaseService getSlave( int nr )
-    {
-        return haDbs.get( nr );
-    }
-
-    @Override
-    protected int addDb( Map<String, String> config, boolean awaitStarted )
-    {
-        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseService>();
-        int machineId = haDbs.size()+1;
-        haDbs.add( null );
-        startDb( machineId, config, awaitStarted );
-        return machineId;
-    }
-
-    @Override
-    protected void startDb( int machineId, Map<String, String> config, boolean awaitStarted )
-    {
-        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseService>();
-        File slavePath = dbPath( machineId );
-        PlaceHolderGraphDatabaseService placeHolderDb = new PlaceHolderGraphDatabaseService( slavePath.getAbsolutePath() );
-        Broker broker = makeSlaveBroker( master, 0, machineId, placeHolderDb, config );
-        Map<String,String> cfg = new HashMap<String, String>(config);
-        cfg.put( HaConfig.CONFIG_KEY_SERVER_ID, Integer.toString(machineId) );
-        cfg.put( Config.KEEP_LOGICAL_LOGS, "true" );
-        addDefaultReadTimeout( cfg );
-        HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase( new HAGraphDb(
-                slavePath.getAbsolutePath(), cfg, wrapBrokerAndSetPlaceHolderDb( placeHolderDb, broker ) ) );
-        placeHolderDb.setDb( db );
-        haDbs.set( machineId-1, db );
-    }
-
-    @Override
-    protected void awaitAllStarted() throws Exception
-    {
-    }
-
-    @Override
-    protected void shutdownDb( int machineId )
-    {
-        haDbs.get( machineId-1 ).shutdown();
-    }
-
-    @Override
-    protected void startUpMaster( Map<String, String> extraConfig ) throws Exception
-    {
-        master = new MasterImpl( startUpMasterDb( extraConfig ), extraConfig );
-    }
-    
-    protected PlaceHolderGraphDatabaseService startUpMasterDb( Map<String, String> extraConfig ) throws Exception
-    {
-        int masterId = 0;
-        Map<String, String> config = MapUtil.stringMap( extraConfig,
-                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ));
-        addDefaultReadTimeout( config );
-        String path = dbPath( 0 ).getAbsolutePath();
-        PlaceHolderGraphDatabaseService placeHolderDb = new PlaceHolderGraphDatabaseService( path );
-        Broker broker = makeMasterBroker( masterId, placeHolderDb, config );
-        HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase( new HAGraphDb(
-                path, config, wrapBrokerAndSetPlaceHolderDb( placeHolderDb, broker ) ) );
-        placeHolderDb.setDb( db );
-        return placeHolderDb;
-    }
-
-    private void addDefaultReadTimeout( Map<String, String> config )
-    {
-        if (!config.containsKey( HaConfig.CONFIG_KEY_READ_TIMEOUT ))
-        {
-            config.put( HaConfig.CONFIG_KEY_READ_TIMEOUT, String.valueOf( TEST_READ_TIMEOUT ) );
-        }
-    }
-
-    protected Broker makeMasterBroker( int masterId, GraphDatabaseService graphDb, Map<String, String> config )
-    {
-        return new FakeMasterBroker( masterId, graphDb, config );
-    }
-
-    protected Broker makeSlaveBroker( MasterImpl master, int masterId, int id, AbstractGraphDatabase graphDb, Map<String, String> config )
-    {
-        return new FakeSlaveBroker( master, masterId, id, graphDb );
-    }
-
-    protected MasterImpl getMaster()
-    {
-        return master;
-    }
-
-    @Override
-    protected void shutdownDbs()
-    {
-        for ( GraphDatabaseService haDb : haDbs )
-        {
-            haDb.shutdown();
-        }
-        master.getGraphDb().shutdown();
-    }
+    private List<GraphDatabaseSPI> haDbs;
 
     @After
     public void verifyAndShutdownDbs()
@@ -180,6 +87,117 @@ public class SingleJvmTest extends AbstractHaTest
                 db.shutdown();
             }
         }
+    }
+
+    protected GraphDatabaseSPI getSlave( int nr )
+    {
+        return haDbs.get( nr );
+    }
+
+    @Override
+    protected int addDb( Map<String, String> config, boolean awaitStarted )
+    {
+        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseSPI>();
+        int machineId = haDbs.size()+1;
+        haDbs.add( null );
+        startDb( machineId, config, awaitStarted );
+        return machineId;
+    }
+
+    @Override
+    protected void startDb( final int machineId, final Map<String, String> config, boolean awaitStarted )
+    {
+        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseSPI>();
+        File slavePath = dbPath( machineId );
+        Map<String,String> cfg = new HashMap<String, String>(config);
+        cfg.put( HaConfig.CONFIG_KEY_SERVER_ID, Integer.toString(machineId) );
+        cfg.put( Config.KEEP_LOGICAL_LOGS, "true" );
+        addDefaultReadTimeout( cfg );
+        HighlyAvailableGraphDatabase haGraphDb = new HighlyAvailableGraphDatabase(slavePath.getAbsolutePath(), cfg)
+        {
+            @Override
+            protected Broker createBroker()
+            {
+                return makeSlaveBroker( master, 0, machineId, this, config );
+            }
+        };
+        
+        haDbs.set( machineId-1, haGraphDb );
+    }
+
+    @Override
+    protected void awaitAllStarted() throws Exception
+    {
+    }
+
+    @Override
+    protected void shutdownDb( int machineId )
+    {
+        haDbs.get( machineId-1 ).shutdown();
+    }
+
+    @Override
+    protected void startUpMaster( Map<String, String> extraConfig ) throws Exception
+    {
+        ZooClient.Configuration zooConfig = ConfigProxy.config( extraConfig , ZooClient.Configuration.class );
+        int timeOut = zooConfig.lock_read_timeout( zooConfig.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) );
+        master = new MasterImpl( startUpMasterDb( extraConfig ), timeOut );
+    }
+    
+    protected HighlyAvailableGraphDatabase startUpMasterDb( Map<String, String> extraConfig ) throws Exception
+    {
+        final int masterId = 0;
+        final Map<String, String> config = MapUtil.stringMap( extraConfig,
+                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ));
+        addDefaultReadTimeout( config );
+        String path = dbPath( 0 ).getAbsolutePath();
+        HighlyAvailableGraphDatabase haGraphDb = new HighlyAvailableGraphDatabase(
+            path, config)
+        {
+            @Override
+            protected Broker createBroker()
+            {
+                return makeMasterBroker( masterId, this, config );
+            }
+        };
+        return haGraphDb;
+    }
+
+    private void addDefaultReadTimeout( Map<String, String> config )
+    {
+        if (!config.containsKey( HaConfig.CONFIG_KEY_READ_TIMEOUT ))
+        {
+            config.put( HaConfig.CONFIG_KEY_READ_TIMEOUT, String.valueOf( TEST_READ_TIMEOUT ) );
+        }
+    }
+
+    protected Broker makeMasterBroker( int masterId, GraphDatabaseSPI graphDb, Map<String, String> config )
+    {
+        ZooClient.Configuration zooConfig = ConfigProxy.config( config , ZooClient.Configuration.class );
+        AbstractBroker.Configuration brokerConfig = ConfigProxy.config( config , AbstractBroker.Configuration.class );
+
+        return new FakeMasterBroker( brokerConfig, zooConfig);
+    }
+
+    protected Broker makeSlaveBroker( MasterImpl master, int masterId, int id, HighlyAvailableGraphDatabase graphDb, Map<String, String> config )
+    {
+        return new FakeSlaveBroker( master, masterId, ConfigProxy.config( config, AbstractBroker.Configuration.class ) );
+    }
+
+    protected MasterImpl getMaster()
+    {
+        return master;
+    }
+
+    @Override
+    protected void shutdownDbs()
+    {
+        if (haDbs != null)
+            for ( GraphDatabaseService haDb : haDbs )
+            {
+                haDb.shutdown();
+            }
+        master.getGraphDb().shutdown();
     }
 
     @Override

@@ -74,11 +74,12 @@ public class SlaveIdGenerator implements IdGenerator
             return generators.get( idType );
         }
         
-        public void updateIdGenerators( NeoStore store )
+        @Override
+        public boolean shouldUpdateIdGenerators()
         {
-            store.updateIdGenerators();
+            return true;
         }
-        
+
         public void forgetIdAllocationsFromMaster()
         {
             for ( SlaveIdGenerator idGenerator : generators.values() )

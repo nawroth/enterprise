@@ -73,7 +73,7 @@ class RebuildFromLogs
 
     private static XaDataSource getDataSource( AbstractGraphDatabase graphdb, String name )
     {
-        XaDataSource datasource = graphdb.getConfig().getTxModule().getXaDataSourceManager().getXaDataSource( name );
+        XaDataSource datasource = graphdb.getXaDataSourceManager().getXaDataSource( name );
         if ( datasource == null ) throw new NullPointerException( "Could not access " + name );
         return datasource;
     }

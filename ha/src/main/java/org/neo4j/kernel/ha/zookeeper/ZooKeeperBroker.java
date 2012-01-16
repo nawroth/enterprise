@@ -29,13 +29,18 @@ import java.util.Map;
 
 import javax.management.remote.JMXServiceURL;
 
+import org.neo4j.com.StoreIdGetter;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.ConfigurationPrefix;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.ConnectionInformation;
 import org.neo4j.kernel.ha.Master;
+import org.neo4j.kernel.ha.MasterGraphDatabase;
 import org.neo4j.kernel.ha.MasterImpl;
 import org.neo4j.kernel.ha.MasterServer;
 import org.neo4j.kernel.ha.ResponseReceiver;
@@ -45,20 +50,21 @@ import org.neo4j.management.Neo4jManager;
 
 public class ZooKeeperBroker extends AbstractBroker
 {
+    @ConfigurationPrefix( "ha." )
+    public interface Configuration
+        extends AbstractBroker.Configuration
+    {
+        int coordinator_fetch_info_timeout( int def );
+    }
+    
     private final ZooClient zooClient;
-    private final String haServer;
-    private int clientLockReadTimeout;
-    private Map<String, String> config;
     private int fetchInfoTimeout;
 
-    public ZooKeeperBroker( AbstractGraphDatabase graphDb, Map<String, String> config, ResponseReceiver receiver )
+    public ZooKeeperBroker( Configuration conf, ZooClient zooClient )
     {
-        super( HaConfig.getMachineIdFromConfig( config ), graphDb );
-        this.config = config;
-        haServer = HaConfig.getHaServerFromConfig( config );
-        clientLockReadTimeout = HaConfig.getClientLockReadTimeoutFromConfig( config );
-        fetchInfoTimeout = HaConfig.getFetchInfoTimeoutFromConfig( config );
-        zooClient = new ZooClient( graphDb, config, receiver );
+        super( conf );
+        fetchInfoTimeout = conf.coordinator_fetch_info_timeout(HaConfig.CONFIG_DEFAULT_COORDINATOR_FETCH_INFO_TIMEOUT);
+        this.zooClient = zooClient;
     }
 
     @Override
@@ -138,7 +144,7 @@ public class ZooKeeperBroker extends AbstractBroker
     public void setConnectionInformation( KernelData kernel )
     {
         String instanceId = kernel.instanceId();
-        JMXServiceURL url = Neo4jManager.getConnectionURL( kernel );
+        JMXServiceURL url = Neo4jManager.getConnectionURL(kernel);
         if ( instanceId != null && url != null )
         {
             zooClient.setJmxConnectionData( url, instanceId );
@@ -193,12 +199,9 @@ public class ZooKeeperBroker extends AbstractBroker
         return zooClient.getMasterBasedOn( machines.values() );
     }
 
-    public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
+    public Object instantiateMasterServer( GraphDatabaseSPI graphDb )
     {
-        MasterServer server = new MasterServer( new MasterImpl( graphDb, config ),
-                Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog(),
-                clientLockReadTimeout );
-        return server;
+        return zooClient.instantiateMasterServer( graphDb );
     }
 
     @Override

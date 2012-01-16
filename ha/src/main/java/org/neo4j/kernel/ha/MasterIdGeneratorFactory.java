@@ -25,8 +25,8 @@ import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 public class MasterIdGeneratorFactory extends DefaultIdGeneratorFactory
 {
     @Override
-    public void updateIdGenerators( NeoStore neoStore )
+    public boolean shouldUpdateIdGenerators()
     {
-        // Do nothing
+        return false;
     }
 }

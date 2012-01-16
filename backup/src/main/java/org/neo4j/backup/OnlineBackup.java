@@ -41,6 +41,7 @@ import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.Config;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreAccess;
 import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
@@ -86,9 +87,8 @@ public class OnlineBackup
         long timestamp = System.currentTimeMillis();
         try
         {
-            Response<Void> response = client.fullBackup( new ToFileStoreWriter(
-                    targetDirectory ) );
-            GraphDatabaseService targetDb = startTemporaryDb( targetDirectory,
+            Response<Void> response = client.fullBackup( new ToFileStoreWriter( targetDirectory ) );
+            GraphDatabaseSPI targetDb = startTemporaryDb( targetDirectory,
                     VerificationLevel.NONE /* run full check instead */ );
             try
             {
@@ -101,14 +101,15 @@ public class OnlineBackup
             bumpLogFile( targetDirectory, timestamp );
             if ( verification )
             {
-                StoreAccess newStore = new StoreAccess( targetDirectory );
+                EmbeddedGraphDatabase graphdb = new EmbeddedGraphDatabase( targetDirectory );
+                StoreAccess newStore = new StoreAccess( graphdb );
                 try
                 {
                     ConsistencyCheck.run( newStore, false );
                 }
                 finally
                 {
-                    newStore.close();
+                    graphdb.shutdown();
                 }
             }
         }
@@ -162,7 +163,7 @@ public class OnlineBackup
         {
             throw new RuntimeException( targetDirectory + " doesn't contain a database" );
         }
-        GraphDatabaseService targetDb = startTemporaryDb( targetDirectory, VerificationLevel.valueOf( verification ) );
+        GraphDatabaseSPI targetDb = startTemporaryDb( targetDirectory, VerificationLevel.valueOf( verification ) );
 
         long backupStartTime = System.currentTimeMillis();
         OnlineBackup result = null;
@@ -187,9 +188,9 @@ public class OnlineBackup
         return result;
     }
 
-    public OnlineBackup incremental( GraphDatabaseService targetDb )
+    public OnlineBackup incremental( GraphDatabaseSPI targetDb )
     {
-        BackupClient client = new BackupClient( hostNameOrIp, port, ((AbstractGraphDatabase)targetDb).getMessageLog(),
+        BackupClient client = new BackupClient( hostNameOrIp, port, targetDb.getMessageLog(),
                 Client.storeIdGetterForDb( targetDb ) );
         try
         {
@@ -202,7 +203,7 @@ public class OnlineBackup
         return this;
     }
 
-    private void unpackResponse( Response<Void> response, GraphDatabaseService graphDb, TxHandler txHandler )
+    private void unpackResponse( Response<Void> response, GraphDatabaseSPI graphDb, TxHandler txHandler )
     {
         try
         {
@@ -217,7 +218,7 @@ public class OnlineBackup
 
     private void getLastCommittedTxs( GraphDatabaseService graphDb )
     {
-        for ( XaDataSource ds : ((AbstractGraphDatabase) graphDb).getConfig().getTxModule().getXaDataSourceManager().getAllRegisteredDataSources() )
+        for ( XaDataSource ds : ((AbstractGraphDatabase) graphDb).getXaDataSourceManager().getAllRegisteredDataSources() )
         {
             lastCommittedTxs.put( ds.getName(), ds.getLastCommittedTxId() );
         }
@@ -227,7 +228,7 @@ public class OnlineBackup
     private SlaveContext slaveContextOf( GraphDatabaseService graphDb )
     {
         XaDataSourceManager dsManager =
-                ((AbstractGraphDatabase) graphDb).getConfig().getTxModule().getXaDataSourceManager();
+                ((AbstractGraphDatabase) graphDb).getXaDataSourceManager();
         List<Pair<String, Long>> txs = new ArrayList<Pair<String,Long>>();
         for ( XaDataSource ds : dsManager.getAllRegisteredDataSources() )
         {

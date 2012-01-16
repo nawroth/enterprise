@@ -20,34 +20,40 @@
 package slavetest;
 
 import java.util.Collection;
-
-import org.neo4j.graphdb.GraphDatabaseService;
+import javax.transaction.TransactionManager;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
+import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.event.KernelEventHandler;
 import org.neo4j.graphdb.event.TransactionEventHandler;
 import org.neo4j.graphdb.index.IndexManager;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
+import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.kernel.IdGeneratorFactory;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.TransactionBuilder;
+import org.neo4j.kernel.impl.core.LockReleaser;
+import org.neo4j.kernel.impl.core.NodeManager;
+import org.neo4j.kernel.impl.core.RelationshipTypeHolder;
+import org.neo4j.kernel.impl.transaction.LockManager;
+import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
+import org.neo4j.kernel.impl.util.StringLogger;
+import org.neo4j.kernel.info.DiagnosticsManager;
 
-public class PlaceHolderGraphDatabaseService extends AbstractGraphDatabase
+public class PlaceHolderGraphDatabaseService implements GraphDatabaseSPI
 {
-    private volatile GraphDatabaseService db;
+    private volatile GraphDatabaseSPI db;
 
-    public PlaceHolderGraphDatabaseService( String storeDir )
+    public PlaceHolderGraphDatabaseService( )
     {
-        super( storeDir );
     }
 
-    public void setDb( GraphDatabaseService db )
+    public void setDb( GraphDatabaseSPI db )
     {
         this.db = db;
     }
-    
-    public GraphDatabaseService getDb()
+
+    public GraphDatabaseSPI getDb()
     {
         return db;
     }
@@ -77,21 +83,9 @@ public class PlaceHolderGraphDatabaseService extends AbstractGraphDatabase
     }
 
     @Override
-    protected void close()
-    {
-        db.shutdown();
-    }
-
-    @Override
     public Transaction beginTx()
     {
         return db.beginTx();
-    }
-    
-    @Override
-    public TransactionBuilder tx()
-    {
-        return ((AbstractGraphDatabase)db).tx();
     }
 
     @Override
@@ -127,20 +121,104 @@ public class PlaceHolderGraphDatabaseService extends AbstractGraphDatabase
     }
 
     @Override
-    public Config getConfig()
+    public NodeManager getNodeManager()
     {
-        return ((AbstractGraphDatabase) db).getConfig();
+        return db.getNodeManager();
+    }
+
+    @Override
+    public LockReleaser getLockReleaser()
+    {
+        return db.getLockReleaser();
+    }
+
+    @Override
+    public LockManager getLockManager()
+    {
+        return db.getLockManager();
+    }
+
+    @Override
+    public XaDataSourceManager getXaDataSourceManager()
+    {
+        return db.getXaDataSourceManager();
+    }
+
+    @Override
+    public TransactionManager getTxManager()
+    {
+        return db.getTxManager();
+    }
+
+    @Override
+    public DiagnosticsManager getDiagnosticsManager()
+    {
+        return db.getDiagnosticsManager();
+    }
+
+    @Override
+    public StringLogger getMessageLog()
+    {
+        return db.getMessageLog();
+    }
+
+    @Override
+    public RelationshipTypeHolder getRelationshipTypeHolder()
+    {
+        return db.getRelationshipTypeHolder();
+    }
+
+    @Override
+    public IdGeneratorFactory getIdGeneratorFactory()
+    {
+        return db.getIdGeneratorFactory();
+    }
+
+    @Override
+    public String getStoreDir()
+    {
+        return db.getStoreDir();
+    }
+
+    @Override
+    public Iterable<Node> getAllNodes()
+    {
+        return db.getAllNodes();
+    }
+
+    @Override
+    public Iterable<RelationshipType> getRelationshipTypes()
+    {
+        return db.getRelationshipTypes();
+    }
+
+    @Override
+    public void shutdown()
+    {
+        db.shutdown();
+    }
+
+    @Override
+    public KernelData getKernelData()
+    {
+        return db.getKernelData();
+    }
+
+    @Override
+    public <T> T getSingleManagementBean( Class<T> type )
+    {
+        return db.getSingleManagementBean( type );
     }
 
     @Override
     public <T> Collection<T> getManagementBeans( Class<T> type )
     {
-        return ( (AbstractGraphDatabase) db ).getManagementBeans( type );
+        return db.getManagementBeans( type );
     }
-    
+
     @Override
-    public KernelData getKernelData()
+    public TransactionBuilder tx()
     {
-        return ((AbstractGraphDatabase)db).getKernelData();
+        return db.tx();
     }
 }

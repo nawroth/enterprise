@@ -21,23 +21,28 @@ package org.neo4j.kernel.ha;
 
 import java.util.Map;
 
+import org.neo4j.com.Client;
 import org.neo4j.com.Protocol;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.ConfigProxy;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.kernel.ha.zookeeper.ZooClient;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
 public class FakeMasterBroker extends AbstractBroker
 {
-    private Map<String, String> config;
     private StoreId storeId = new StoreId();
+    private ZooClient.Configuration zooClientConfig;
 
-    public FakeMasterBroker( int myMachineId, GraphDatabaseService graphDb, Map<String, String> config )
+    public FakeMasterBroker( Configuration conf, ZooClient.Configuration zooClientConfig )
     {
-        super( myMachineId, graphDb );
-        this.config = config;
+        super( conf );
+        this.zooClientConfig = zooClientConfig;
     }
 
     @Override
@@ -69,9 +74,11 @@ public class FakeMasterBroker extends AbstractBroker
         return getMyMachineId() == 0;
     }
 
-    public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
+    public Object instantiateMasterServer( GraphDatabaseSPI graphDb )
     {
-        return new MasterServer( new MasterImpl( graphDb, config ), Protocol.PORT, graphDb.getMessageLog(),
-                HaConfig.getClientLockReadTimeoutFromConfig( config ) );
+        int timeOut = zooClientConfig.lock_read_timeout( zooClientConfig.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) );
+
+        return new MasterServer( new MasterImpl( graphDb, timeOut ), Protocol.PORT, graphDb.getMessageLog(),
+                timeOut );
     }
 }

@@ -382,9 +382,7 @@ public abstract class Client<M> implements ChannelPipelineFactory
             @Override
             public StoreId get()
             {
-                XaDataSource ds = ((AbstractGraphDatabase) db).getConfig().getTxModule()
-                        .getXaDataSourceManager().getXaDataSource( Config.DEFAULT_DATA_SOURCE_NAME );
-                return ((NeoStoreXaDataSource) ds).getStoreId();
+                return ((AbstractGraphDatabase) db).getStoreId();
             }
         };
     }

@@ -80,8 +80,7 @@ public class TestHaBean
     @Test
     public void canGetBranchedStoreBean() throws Exception
     {
-        Neo4jManager neo4j = new Neo4jManager(
-                db.getSingleManagementBean( Kernel.class ) );
+        Neo4jManager neo4j = new Neo4jManager(db.getSingleManagementBean( Kernel.class ) );
         BranchedStore bs = neo4j.getBranchedStoreBean();
         assertNotNull( "could not get ha bean", bs );
         assertEquals( "no branched stores for new db", 0,

@@ -21,20 +21,25 @@ package org.neo4j.kernel.ha.zookeeper;
 
 import static org.neo4j.com.Server.DEFAULT_BACKUP_PORT;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
 
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
+import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooKeeper;
 import org.neo4j.com.Client;
 import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
+import org.neo4j.kernel.impl.util.StringLogger;
 
 public class ClusterManager extends AbstractZooKeeperManager
 {
+    protected static final int SESSION_TIME_OUT = 5000;
+
     private final ZooKeeper zooKeeper;
     private String rootPath;
     private KeeperState state = KeeperState.Disconnected;
@@ -47,20 +52,21 @@ public class ClusterManager extends AbstractZooKeeperManager
 
     public ClusterManager( String zooKeeperServers, String clusterName )
     {
-        super( zooKeeperServers, null, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
-                Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
-                Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT );
+        super(zooKeeperServers, StringLogger.SYSTEM, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+              Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+              Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT);
         this.clusterName = clusterName;
-        this.zooKeeper = instantiateZooKeeper();
+        try
+        {
+            zooKeeper = new ZooKeeper( zooKeeperServers, SESSION_TIME_OUT, new WatcherImpl() );
+        }
+        catch ( IOException e )
+        {
+            throw new ZooKeeperException(
+                "Unable to create zoo keeper client", e );
+        }
     }
-
-    @Override
-    protected int getMyMachineId()
-    {
-        throw new UnsupportedOperationException( "Not implemented ClusterManager.getMyMachineId()" );
-    }
-
-    @Override
+    
     public void waitForSyncConnected()
     {
         long startTime = System.currentTimeMillis();
@@ -88,22 +94,11 @@ public class ClusterManager extends AbstractZooKeeperManager
         return port != 0 ? port : DEFAULT_BACKUP_PORT;
     }
 
-    public void process( WatchedEvent event )
-    {
-        // System.out.println( "Got event: " + event );
-        String path = event.getPath();
-        if ( path == null )
-        {
-            state = event.getState();
-        }
-    }
-
     public Machine getMaster()
     {
         return getMasterBasedOn( getAllMachines( true ).values() );
     }
-
-    @Override
+    
     public String getRoot()
     {
         if ( rootPath == null )
@@ -120,30 +115,7 @@ public class ClusterManager extends AbstractZooKeeperManager
         if ( storeId == null ) throw new RuntimeException( "Cluster '" + clusterName + "' not found" );
         return asRootPath( storeId );
     }
-
-    public static String asRootPath( StoreId storeId )
-    {
-        return "/" + storeId.getCreationTime() + "_" + storeId.getRandomId();
-    }
-
-    public static StoreId getClusterStoreId( ZooKeeper keeper, String clusterName )
-    {
-        try
-        {
-            byte[] child = keeper.getData( "/" + clusterName, false, null );
-            return StoreId.deserialize( child );
-        }
-        catch ( KeeperException e )
-        {
-            if ( e.code() == KeeperException.Code.NONODE ) return null;
-            throw new ZooKeeperException( "Error getting store id", e );
-        }
-        catch ( InterruptedException e )
-        {
-            throw new ZooKeeperException( "Interrupted", e );
-        }
-    }
-
+    
     /**
      * Returns the disconnected slaves in this cluster so that all slaves
      * which are specified in the HA servers configuration, but not in the
@@ -179,5 +151,19 @@ public class ClusterManager extends AbstractZooKeeperManager
     {
         if ( sync ) this.zooKeeper.sync( getRoot(), null, null );
         return this.zooKeeper;
+    }
+
+    private class WatcherImpl
+        implements Watcher
+    {
+        public void process( WatchedEvent event )
+        {
+            // System.out.println( "Got event: " + event );
+            String path = event.getPath();
+            if ( path == null )
+            {
+                state = event.getState();
+            }
+        }
     }
 }

@@ -88,11 +88,11 @@ class VerifyingTransactionInterceptor implements TransactionInterceptor
     private final CheckerMode mode;
 
     VerifyingTransactionInterceptor(
-            NeoStoreXaDataSource ds, CheckerMode mode, boolean rejectInconsistentTransactions )
+            NeoStoreXaDataSource ds, StringLogger stringLogger, CheckerMode mode, boolean rejectInconsistentTransactions )
     {
         this.rejectInconsistentTransactions = rejectInconsistentTransactions;
         this.diffs = new DiffStore( ds.getNeoStore() );
-        this.msgLog = ds.getMsgLog();
+        this.msgLog = stringLogger;
         this.mode = mode;
     }
 

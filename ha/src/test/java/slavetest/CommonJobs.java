@@ -24,10 +24,8 @@ import java.rmi.Remote;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.Map;
-
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.DynamicRelationshipType;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Lock;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.NotFoundException;
@@ -36,9 +34,8 @@ import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.index.Index;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.DeadlockDetectedException;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.IdType;
 import org.neo4j.kernel.ha.LockableNode;
 import org.neo4j.kernel.impl.core.GraphProperties;
@@ -55,23 +52,11 @@ public abstract class CommonJobs
 
     public static abstract class AbstractJob<T> implements Job<T>
     {
-        protected Config getConfig( GraphDatabaseService db )
-        {
-            try
-            {
-                return (Config) db.getClass().getDeclaredMethod( "getConfig" ).invoke( db );
-            }
-            catch ( Exception e )
-            {
-                // Won't happen
-                throw new RuntimeException( e );
-            }
-        }
     }
 
     public static abstract class TransactionalJob<T> extends AbstractJob<T>
     {
-        public final T execute( GraphDatabaseService db ) throws RemoteException
+        public final T execute( GraphDatabaseSPI db ) throws RemoteException
         {
             Transaction tx = db.beginTx();
             try
@@ -94,7 +79,7 @@ public abstract class CommonJobs
         {
         }
 
-        protected abstract T executeInTransaction( GraphDatabaseService db, Transaction tx );
+        protected abstract T executeInTransaction( GraphDatabaseSPI db, Transaction tx );
     }
 
     public static class CreateSubRefNodeJob extends TransactionalJob<Long>
@@ -111,7 +96,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Long executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Long executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node node = db.createNode();
             Relationship rel = db.getReferenceNode().createRelationshipTo( node,
@@ -139,7 +124,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Integer executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Integer executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node node = db.createNode();
             db.getReferenceNode().createRelationshipTo( node,
@@ -164,7 +149,7 @@ public abstract class CommonJobs
             this.shutdownDispatcher = shutdownDispatcher;
         }
 
-        public Serializable[] execute( GraphDatabaseService db ) throws RemoteException
+        public Serializable[] execute( GraphDatabaseSPI db ) throws RemoteException
         {
             Transaction tx = db.beginTx();
             boolean successful = false;
@@ -204,7 +189,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Object executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Object executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node refNode = db.getReferenceNode();
             // To force it to pull updates
@@ -221,7 +206,7 @@ public abstract class CommonJobs
     public static class CreateSomeEntitiesJob extends TransactionalJob<Void>
     {
         @Override
-        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Void executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node node1 = db.createNode();
             Relationship rel1 = db.getReferenceNode().createRelationshipTo( node1, REL_TYPE );
@@ -246,7 +231,7 @@ public abstract class CommonJobs
             this.id = id;
         }
 
-        public Boolean execute( GraphDatabaseService db )
+        public Boolean execute( GraphDatabaseSPI db )
         {
             try
             {
@@ -290,7 +275,7 @@ public abstract class CommonJobs
             this.id = id;
         }
 
-        public Boolean execute( GraphDatabaseService db ) throws RemoteException
+        public Boolean execute( GraphDatabaseSPI db ) throws RemoteException
         {
             Transaction tx = db.beginTx();
             boolean successful = false;
@@ -324,7 +309,7 @@ public abstract class CommonJobs
             this.types = types;
         }
 
-        public Integer execute( GraphDatabaseService db )
+        public Integer execute( GraphDatabaseSPI db )
         {
             int counter = 0;
             for ( Relationship rel : db.getReferenceNode().getRelationships(
@@ -348,7 +333,7 @@ public abstract class CommonJobs
 
     public static class CreateNodeOutsideOfTxJob implements Job<Boolean>
     {
-        public Boolean execute( GraphDatabaseService db ) throws RemoteException
+        public Boolean execute( GraphDatabaseSPI db ) throws RemoteException
         {
             try
             {
@@ -377,7 +362,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Long executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Long executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node node = db.createNode();
             if ( beSuccessful ) tx.success();
@@ -399,7 +384,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Boolean executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Boolean executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             try
             {
@@ -424,7 +409,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Long[] executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Long[] executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Long[] result = new Long[count];
             for ( int i = 0; i < count; i++ )
@@ -450,7 +435,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Boolean[] executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Boolean[] executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             boolean success = false;
             boolean deadlock = false;
@@ -491,7 +476,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Boolean[] executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Boolean[] executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             boolean success = false;
             boolean deadlock = false;
@@ -529,13 +514,13 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Boolean[] executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Boolean[] executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             boolean success = false;
             boolean deadlock = false;
             try
             {
-                PropertyContainer properties = ((AbstractGraphDatabase)db).getConfig().getGraphDbModule().getNodeManager().getGraphProperties();
+                PropertyContainer properties = db.getNodeManager().getGraphProperties();
                 DoubleLatch latch = fetcher.fetch();
                 db.getNodeById( node ).setProperty( "1", "T1 1" );
                 latch.countDownSecond();
@@ -569,9 +554,9 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Void executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
-            ((AbstractGraphDatabase)db).getConfig().getGraphDbModule().getNodeManager().getGraphProperties().setProperty( key, value );
+            db.getNodeManager().getGraphProperties().setProperty( key, value );
             tx.success();
             return null;
         }
@@ -587,9 +572,9 @@ public abstract class CommonJobs
         }
 
         @Override
-        public Object execute( GraphDatabaseService db ) throws RemoteException
+        public Object execute( GraphDatabaseSPI db ) throws RemoteException
         {
-            GraphProperties properties = ((AbstractGraphDatabase)db).getConfig().getGraphDbModule().getNodeManager().getGraphProperties();
+            GraphProperties properties = db.getNodeManager().getGraphProperties();
             return properties.getProperty( key );
         }
     }
@@ -606,13 +591,13 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Boolean[] executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Boolean[] executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             boolean success = false;
             boolean deadlock = false;
             try
             {
-                PropertyContainer properties = ((AbstractGraphDatabase)db).getConfig().getGraphDbModule().getNodeManager().getGraphProperties();
+                PropertyContainer properties = db.getNodeManager().getGraphProperties();
                 DoubleLatch latch = fetcher.fetch();
                 properties.setProperty( "2", "T2 2" );
                 latch.countDownFirst();
@@ -643,11 +628,10 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Void executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
-            Config config = getConfig( db );
-            LockManager lockManager = config.getLockManager();
-            LockReleaser lockReleaser = config.getLockReleaser();
+            LockManager lockManager = db.getLockManager();
+            LockReleaser lockReleaser = db.getLockReleaser();
             for ( int i = 0; i < amount; i++ )
             {
                 Object resource = new LockableNode( i );
@@ -667,10 +651,9 @@ public abstract class CommonJobs
             this.count = count;
         }
 
-        public Void execute( GraphDatabaseService db )
+        public Void execute( GraphDatabaseSPI db )
         {
-            Config config = getConfig( db );
-            IdGenerator generator = config.getIdGeneratorFactory().get( IdType.NODE );
+            IdGenerator generator = db.getIdGeneratorFactory().get( IdType.NODE );
             for ( int i = 0; i < count; i++ )
             {
                 generator.nextId();
@@ -690,7 +673,7 @@ public abstract class CommonJobs
             this.numNodesInEach = numNodesInEach;
         }
 
-        public Void execute( GraphDatabaseService db ) throws RemoteException
+        public Void execute( GraphDatabaseSPI db ) throws RemoteException
         {
             for ( int i = 0; i < numTx; i++ )
             {
@@ -724,7 +707,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Long executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Long executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node node = db.createNode();
             node.setProperty( key, value );
@@ -752,7 +735,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Long executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Long executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Node node = db.createNode();
             node.setProperty( key, value );
@@ -777,7 +760,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Void executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
 //            IndexService index = ((HighlyAvailableGraphDatabase) db).getIndexService();
             Node node = db.getNodeById( nodeId );
@@ -801,7 +784,7 @@ public abstract class CommonJobs
             this.numTxs = numTxs;
         }
 
-        public Void execute( GraphDatabaseService db ) throws RemoteException
+        public Void execute( GraphDatabaseSPI db ) throws RemoteException
         {
             byte[] largeArray = new byte[1*1024*1021]; /* 1021 So that it doesn't align with block size in BlockLogBuffer and all that :) */
             for ( int t = 0; t < numTxs; t++ )
@@ -833,7 +816,7 @@ public abstract class CommonJobs
     {
         private Transaction tx;
 
-        public Void execute( GraphDatabaseService db ) throws RemoteException
+        public Void execute( GraphDatabaseSPI db ) throws RemoteException
         {
             tx = db.beginTx();
             db.createNode();
@@ -858,7 +841,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Void executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             DoubleLatch latch = latchFetcher.fetch();
             Node node = db.getNodeById( nodeId );
@@ -889,7 +872,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Void executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Void executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             Lock lock = tx.acquireWriteLock( db.getNodeById( nodeId ) );
             lock.release();
@@ -923,7 +906,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Node executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Node executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             DoubleLatch latch = latchFetcher.fetch();
             Node result = db.index().forNodes( index ).putIfAbsent( db.getNodeById( nodeId ), key, value );
@@ -950,7 +933,7 @@ public abstract class CommonJobs
         }
 
         @Override
-        protected Node executeInTransaction( GraphDatabaseService db, Transaction tx )
+        protected Node executeInTransaction( GraphDatabaseSPI db, Transaction tx )
         {
             DoubleLatch latch = latchFetcher.fetch();
             try

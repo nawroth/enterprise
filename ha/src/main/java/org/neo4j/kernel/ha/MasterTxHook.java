@@ -26,8 +26,13 @@ import org.neo4j.kernel.impl.transaction.TxHook;
 
 public class MasterTxHook implements TxHook
 {
-    private TxHook defaultHook = CommonFactories.defaultTxHook();
-    
+    private TxHook defaultHook;
+
+    public MasterTxHook( TxHook defaultHook )
+    {
+        this.defaultHook = defaultHook;
+    }
+
     @Override
     public void initializeTransaction( int eventIdentifier )
     {

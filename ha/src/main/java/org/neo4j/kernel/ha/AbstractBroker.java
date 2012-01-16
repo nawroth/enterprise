@@ -23,6 +23,7 @@ import java.util.Map;
 
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.ConfigurationPrefix;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
@@ -30,13 +31,17 @@ import org.neo4j.kernel.impl.util.StringLogger;
 
 public abstract class AbstractBroker implements Broker
 {
-    private final int myMachineId;
-    private final GraphDatabaseService graphDb;
+    private Configuration config;
 
-    public AbstractBroker( int myMachineId, GraphDatabaseService graphDb )
+    @ConfigurationPrefix( "ha." )
+    public interface Configuration
     {
-        this.myMachineId = myMachineId;
-        this.graphDb = graphDb;
+        int server_id();
+    }
+    
+    public AbstractBroker( Configuration config)
+    {
+        this.config = config;
     }
 
     public void setLastCommittedTxId( long txId )
@@ -46,18 +51,13 @@ public abstract class AbstractBroker implements Broker
 
     public int getMyMachineId()
     {
-        return this.myMachineId;
+        return config.server_id();
     }
 
     @Override
     public void notifyMasterChange( Machine newMaster )
     {
         // Do nothing
-    }
-
-    public String getStoreDir()
-    {
-        return ((AbstractGraphDatabase) graphDb).getStoreDir();
     }
 
     public void shutdown()
@@ -75,17 +75,6 @@ public abstract class AbstractBroker implements Broker
         // Do nothing
     }
     
-    public static BrokerFactory wrapSingleBroker( final Broker broker )
-    {
-        return new BrokerFactory()
-        {
-            public Broker create( AbstractGraphDatabase graphDb, Map<String, String> graphDbConfig )
-            {
-                return broker;
-            }
-        };
-    }
-
     public void setConnectionInformation( KernelData kernel )
     {
     }
