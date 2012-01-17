@@ -84,7 +84,7 @@ public class BackupTool
         if ( service != null )
         { // If in here, it means a module was loaded. Use it and substitute the
           // passed URI
-            backupURI = service.resolve( backupURI );
+            backupURI = service.resolve( backupURI, arguments );
         }
         doBackup( full, backupURI, to, verify );
     }
@@ -102,7 +102,11 @@ public class BackupTool
 
         if ( arguments.get( FROM, null ) == null )
         {
-            exitAbnormally( "Please specify " + dash( FROM ) );
+            exitAbnormally( "Please specify " + dash( FROM ) + ", examples:\n" +
+                    "  " + dash( FROM ) + " single://192.168.1.34\n" +
+                    "  " + dash( FROM ) + " single://192.168.1.34:1234\n" +
+                    "  " + dash( FROM ) + " ha://192.168.1.15:2181\n" +
+                    "  " + dash( FROM ) + " ha://192.168.1.15:2181,192.168.1.16:2181" );
         }
 
         if ( arguments.get( TO, null ) == null )

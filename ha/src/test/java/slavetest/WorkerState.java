@@ -17,25 +17,31 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.kernel.ha;
+package slavetest;
 
-import org.neo4j.com.Response;
-import org.neo4j.com.SlaveContext;
+import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Transaction;
 
-public interface ResponseReceiver
+public class WorkerState
 {
-    /**
-     * Returns a {@link SlaveContext} instance that has {@code eventIdentifier}
-     * as the event identifier.
-     *
-     * @param eventIdentifier The event identifier of the returned slave context
-     * @return The slave context
-     */
-    SlaveContext getSlaveContext( int eventIdentifier );
+    final GraphDatabaseService db;
+    Transaction tx;
 
-    <T> T receive( Response<T> response );
+    public WorkerState( GraphDatabaseService db )
+    {
+        this.db = db;
+    }
 
-    void newMaster( Exception cause );
-
-    void reconnect( Exception cause );
+    public void beginTx()
+    {
+        assert tx == null;
+        tx = db.beginTx();
+    }
+    
+    public void finishTx( boolean success )
+    {
+        assert tx != null;
+        if ( success ) tx.success();
+        tx.finish();
+    }
 }

@@ -83,7 +83,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 {
     private final Map<String, String> config;
     private final BrokerFactory brokerFactory;
-    private final Broker broker;
+    private volatile Broker broker;
     private volatile EmbeddedGraphDbImpl localGraph;
     private final int machineId;
     private volatile MasterServer masterServer;
@@ -95,6 +95,12 @@ public class HAGraphDb extends AbstractGraphDatabase
     private final HaConfig.SlaveUpdateMode slaveUpdateMode;
     private final int readTimeout;
     private final boolean allowInitCluster;
+    /*
+     *  True iff it is ok to pull updates. Used to control the
+     *  update puller during master switches, to reduce could not connect
+     *  log statements. More elegant that stopping and starting the executor.
+     */
+    private volatile boolean pullUpdates;
 
     private final List<KernelEventHandler> kernelEventHandlers =
             new CopyOnWriteArrayList<KernelEventHandler>();
@@ -148,6 +154,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                 }
             }
         }.start();
+        this.pullUpdates = false;
     }
 
     private void initializeTxManagerKernelPanicEventHandler()
@@ -408,7 +415,25 @@ public class HAGraphDb extends AbstractGraphDatabase
     @Override
     public String toString()
     {
-        return getClass().getSimpleName() + "[" + HaConfig.CONFIG_KEY_SERVER_ID + ":" + machineId + "]";
+        return getClass().getSimpleName() + "[" + getStoreDir() + ", " + HaConfig.CONFIG_KEY_SERVER_ID + ":" + machineId + "]";
+    }
+
+    /**
+     * Shuts down the broker, invalidating every connection to the zookeeper
+     * cluster and starts it again. Should be called in case a ConnectionExpired
+     * event is received, this is the equivalent of building the ZK connection
+     * from start. Also triggers a master reelect, to make sure that the state
+     * ZK ended up in during our absence is respected.
+     */
+    @Override
+    public void reconnect( Exception e )
+    {
+        if ( broker != null )
+        {
+            broker.shutdown();
+        }
+        this.broker = brokerFactory.create( this, config );
+        newMaster( e );
     }
 
     protected synchronized void reevaluateMyself()
@@ -417,6 +442,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         boolean iAmCurrentlyMaster = masterServer != null;
         getMessageLog().logMessage( "ReevaluateMyself: machineId=" + machineId + " with master[" + master +
                 "] (I am master=" + iAmCurrentlyMaster + ", " + localGraph + ")" );
+        pullUpdates = false;
         EmbeddedGraphDbImpl newDb = null;
         try
         {
@@ -448,7 +474,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                     {
                         copyStoreFromMaster( master );
                     }
-                    newDb = startAsSlave( null );
+                    newDb = startAsSlave( null, master );
                 }
                 else
                 {   // I am already a slave, so just forget the ids I got from the previous master
@@ -464,6 +490,18 @@ public class HAGraphDb extends AbstractGraphDatabase
 
                 // Assign the db last
                 this.localGraph = newDb;
+
+                /*
+                 * We have to instantiate the update puller after the local db has been assigned.
+                 * Another way to do it is to wait on a LocalGraphAvailableCondition. I chose this,
+                 * it is simpler to follow, provided you know what a volatile does.
+                 */
+                if ( masterServer == null )
+                {
+                    // The above being true means we are a slave
+                    instantiateAutoUpdatePullerIfConfigSaysSo();
+                    pullUpdates = true;
+                }
             }
         }
         catch ( Throwable t )
@@ -511,7 +549,8 @@ public class HAGraphDb extends AbstractGraphDatabase
         getMessageLog().logMessage( "--- HIGH AVAILABILITY CONFIGURATION END ---", true );
     }
 
-    private EmbeddedGraphDbImpl startAsSlave( StoreId storeId )
+    private EmbeddedGraphDbImpl startAsSlave( StoreId storeId,
+            Pair<Master, Machine> master )
     {
         getMessageLog().logMessage( "Starting[" + machineId + "] as slave", true );
         EmbeddedGraphDbImpl result = new EmbeddedGraphDbImpl( getStoreDir(), storeId, config, this,
@@ -522,7 +561,8 @@ public class HAGraphDb extends AbstractGraphDatabase
                 new SlaveTxHook( broker, this ),
                 slaveUpdateMode.createUpdater( broker ),
                 CommonFactories.defaultFileSystemAbstraction() );
-        instantiateAutoUpdatePullerIfConfigSaysSo();
+        // instantiateAutoUpdatePullerIfConfigSaysSo() moved to
+        // reevaluateMyself(), after the local db has been assigned
         logHaInfo( "Started as slave" );
         return result;
     }
@@ -636,7 +676,10 @@ public class HAGraphDb extends AbstractGraphDatabase
                 {
                     try
                     {
-                        pullUpdates();
+                        if ( pullUpdates )
+                        {
+                            pullUpdates();
+                        }
                     }
                     catch ( Exception e )
                     {
@@ -695,11 +738,27 @@ public class HAGraphDb extends AbstractGraphDatabase
     public synchronized void internalShutdown( boolean rotateLogs )
     {
         getMessageLog().logMessage( "Internal shutdown of HA db[" + machineId + "] reference=" + this + ", masterServer=" + masterServer, new Exception( "Internal shutdown" ), true );
+        pullUpdates = false;
         if ( this.updatePuller != null )
         {
             getMessageLog().logMessage( "Internal shutdown updatePuller", true );
-            this.updatePuller.shutdownNow();
-            getMessageLog().logMessage( "Internal shutdown updatePuller DONE", true );
+            try
+            {
+                /*
+                 * Be gentle, interrupting running threads could leave the
+                 * file channels in a bad shape.
+                 */
+                this.updatePuller.shutdown();
+                this.updatePuller.awaitTermination( 5, TimeUnit.SECONDS );
+            }
+            catch ( InterruptedException e )
+            {
+                getMessageLog().logMessage(
+                        "Got exception while waiting for update puller termination",
+                        e, true );
+            }
+            getMessageLog().logMessage( "Internal shutdown updatePuller DONE",
+                    true );
             this.updatePuller = null;
         }
         if ( this.masterServer != null )
@@ -989,10 +1048,10 @@ public class HAGraphDb extends AbstractGraphDatabase
     private interface Condition<T, E extends Exception>
     {
         T tryToFullfill();
-        
+
         E failure();
     }
-    
+
     private class LocalGraphAvailableCondition implements Condition<EmbeddedGraphDbImpl, RuntimeException>
     {
         @Override
@@ -1000,7 +1059,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         {
             return localGraph;
         }
-        
+
         public RuntimeException failure()
         {
             if ( causeOfShutdown != null )
