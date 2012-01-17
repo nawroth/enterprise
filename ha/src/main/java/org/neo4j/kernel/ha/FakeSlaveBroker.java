@@ -23,6 +23,7 @@ import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
 public class FakeSlaveBroker extends AbstractBroker
 {
@@ -34,6 +35,12 @@ public class FakeSlaveBroker extends AbstractBroker
         super( myMachineId, graphDb );
         this.master = master;
         this.masterMachine = new Machine( masterMachineId, 0, 1, -1, null );
+    }
+    
+    @Override
+    public StoreId getClusterStoreId()
+    {
+        return FakeMasterBroker.STORE_ID;
     }
 
     public Pair<Master, Machine> getMaster()
