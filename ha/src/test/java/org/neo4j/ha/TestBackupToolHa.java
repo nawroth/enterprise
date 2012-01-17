@@ -56,7 +56,7 @@ public class TestBackupToolHa
         FileUtils.deleteDirectory( new File( PATH ) );
         FileUtils.deleteDirectory( new File( BACKUP_PATH ) );
 
-        zk = new LocalhostZooKeeperCluster( TestBackupToolHa.class, 2181, 2182, 2183 );
+        zk = LocalhostZooKeeperCluster.standardZoo( getClass() );
         instances = new ArrayList<GraphDatabaseService>();
         for ( int i = 0; i < 3; i++ )
         {

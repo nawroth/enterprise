@@ -30,7 +30,7 @@ public class ManualZooKeepers
     public static void main( String[] args ) throws Exception
     {
         System.out.println( "Starting zoo keeper cluster (takes a couple of seconds)..." );
-        final LocalhostZooKeeperCluster zoo = new LocalhostZooKeeperCluster( ManualZooKeepers.class, 2181, 2182, 2183 );
+        final LocalhostZooKeeperCluster zoo = LocalhostZooKeeperCluster.standardZoo( ManualZooKeepers.class );
         System.out.println( "Zoo keeper cluster started, awaiting ENTER" );
         System.out.println( zoo.getConnectionString() );
         System.in.read();

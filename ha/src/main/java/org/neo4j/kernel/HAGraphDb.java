@@ -140,6 +140,15 @@ public class HAGraphDb extends AbstractGraphDatabase
         this.brokerFactory = brokerFactory != null ? brokerFactory : defaultBrokerFactory();
         this.broker = this.brokerFactory.create( this, config );
         this.allowInitCluster = HaConfig.getAllowInitFromConfig( config );
+        
+        // Start a thread just to kick-start the process of starting up.
+        // ZooKeeper should be able to do this fine on its own though.
+        kickstartStartupProcess();
+        this.pullUpdates = false;
+    }
+
+    private void kickstartStartupProcess()
+    {
         new Thread()
         {
             public void run()
@@ -157,7 +166,6 @@ public class HAGraphDb extends AbstractGraphDatabase
                 }
             }
         }.start();
-        this.pullUpdates = false;
     }
 
     private void initializeTxManagerKernelPanicEventHandler()
