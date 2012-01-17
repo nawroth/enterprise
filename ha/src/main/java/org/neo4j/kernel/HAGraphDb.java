@@ -97,7 +97,6 @@ public class HAGraphDb extends AbstractGraphDatabase
     private final BranchedDataPolicy branchedDataPolicy;
     private final HaConfig.SlaveUpdateMode slaveUpdateMode;
     private final int readTimeout;
-    private final boolean allowInitCluster;
     /*
      *  True iff it is ok to pull updates. Used to control the
      *  update puller during master switches, to reduce could not connect
@@ -139,7 +138,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         config.put( Config.KEEP_LOGICAL_LOGS, "true" );
         this.brokerFactory = brokerFactory != null ? brokerFactory : defaultBrokerFactory();
         this.broker = this.brokerFactory.create( this, config );
-        this.allowInitCluster = HaConfig.getAllowInitFromConfig( config );
         
         // Start a thread just to kick-start the process of starting up.
         // ZooKeeper should be able to do this fine on its own though.
@@ -377,12 +375,12 @@ public class HAGraphDb extends AbstractGraphDatabase
         EmbeddedGraphDbImpl newDb = null;
         try
         {
+            StoreId storeId = broker.getClusterStoreId();
             if ( master.other().getMachineId() == machineId )
             {   // I am the new master
                 if ( this.localGraph == null || !iAmCurrentlyMaster )
                 {   // I am currently a slave, so restart as master
                     internalShutdown( true );
-                    StoreId storeId = broker.getClusterStoreId();
                     newDb = startAsMaster( storeId );
                 }
                 // fire rebound event
@@ -396,7 +394,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                     // This will result in clearing of free ids from .id files, see SlaveIdGenerator.
                     internalShutdown( true );
                     if ( noDb() ) copyStoreFromMaster( master );
-                    newDb = startAsSlave( broker.getClusterStoreId(), master );
+                    newDb = startAsSlave( storeId, master );
                 }
                 else
                 {   // I am already a slave, so just forget the ids I got from the previous master
@@ -824,17 +822,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
     }
 
-//    private StoreId createCluster()
-//    {
-//        StoreId myStoreId = new StoreId();
-//        StoreId storeId = broker.createCluster( myStoreId );
-//        return storeId.equals( myStoreId ) ?
-//                // I am the first one here, so I'll create the db and the cluster in ZK
-//                myStoreId :
-//                // Someone else is the master, rather copy that store to here
-//                null;
-//    }
-
     public MasterServer getMasterServerIfMaster()
     {
         return masterServer;
@@ -988,27 +975,4 @@ public class HAGraphDb extends AbstractGraphDatabase
             }
         }
     }
-    
-//    private class Ignitor extends Thread
-//    {
-//        private volatile boolean halted;
-//        
-//        @Override
-//        public void run()
-//        {
-//            int attempts = 0;
-//            while ( localGraph == null && attempts++ < 10 && !halted )
-//            {
-//                try
-//                {
-//                    newMaster( new Exception( "Starting up" ) );
-//                }
-//                catch ( Exception e )
-//                {
-//                    getMessageLog().logMessage( "Failed attempt to start up", e );
-//                    sleepWithoutInterruption( 500, "Couldn't wait for new attempt to startup" );
-//                }
-//            }
-//        }
-//    }
 }
