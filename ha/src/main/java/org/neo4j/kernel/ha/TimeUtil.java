@@ -68,4 +68,40 @@ public abstract class TimeUtil
             return timeUnit.toMillis( amount*multiplyFactor );
         }
     }
+
+    public static <T,E extends Exception> T waitForCondition( Condition<T,E> condition, int timeMillis ) throws E
+    {
+        long endTime = System.currentTimeMillis()+timeMillis;
+        T result = condition.tryToFullfill();
+        if ( result != null ) return result;
+        while ( result == null && System.currentTimeMillis() < endTime )
+        {
+            sleepWithoutInterruption( 1, "Failed waiting for " + condition + " to be fulfilled" );
+            result = condition.tryToFullfill();
+            if ( result != null ) return result;
+        }
+        E failure = condition.failure();
+        if ( failure != null ) throw failure;
+        return result;
+    }
+
+    public static void sleepWithoutInterruption( long time, String errorMessage )
+    {
+        try
+        {
+            Thread.sleep( time );
+        }
+        catch ( InterruptedException e )
+        {
+            Thread.interrupted();
+            throw new RuntimeException( errorMessage, e );
+        }
+    }
+    
+    public interface Condition<T, E extends Exception>
+    {
+        T tryToFullfill();
+
+        E failure();
+    }
 }

@@ -19,6 +19,9 @@
  */
 package org.neo4j.test.ha;
 
+import static java.lang.management.ManagementFactory.getPlatformMBeanServer;
+import static org.neo4j.kernel.ha.TimeUtil.waitForCondition;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -30,6 +33,9 @@ import javax.management.MBeanServerInvocationHandler;
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 
+import org.apache.zookeeper.WatchedEvent;
+import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.server.quorum.QuorumMXBean;
 import org.apache.zookeeper.server.quorum.QuorumPeerMain;
 import org.jboss.netty.handler.timeout.TimeoutException;
@@ -37,11 +43,11 @@ import org.junit.Ignore;
 import org.neo4j.helpers.Format;
 import org.neo4j.helpers.Predicate;
 import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.ha.TimeUtil.Condition;
 import org.neo4j.kernel.ha.zookeeper.ClusterManager;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.subprocess.SubProcess;
-
-import static java.lang.management.ManagementFactory.getPlatformMBeanServer;
 
 @Ignore
 public final class LocalhostZooKeeperCluster
@@ -80,7 +86,25 @@ public final class LocalhostZooKeeperCluster
     
     public static LocalhostZooKeeperCluster standardZoo( Class<?> owningTest)
     {
-        return new LocalhostZooKeeperCluster( owningTest, 2181, 2182, 2183 );
+        while ( true )
+        {
+            try
+            {
+                LocalhostZooKeeperCluster zoo = new LocalhostZooKeeperCluster( owningTest, 2181, 2182, 2183 );
+                if ( zoo.ping( 20*1000 ) )
+                {
+                    return zoo;
+                }
+                else
+                {
+                    zoo.shutdown();
+                }
+            }
+            catch ( Exception e )
+            {
+                e.printStackTrace();
+            }
+        }
     }
 
     private void await( ZooKeeper[] keepers, long timeout, TimeUnit unit )
@@ -206,6 +230,82 @@ public final class LocalhostZooKeeperCluster
             if ( zk != null ) SubProcess.stop( zk );
         }
         Arrays.fill( keeper, null );
+    }
+    
+    public boolean ping( long timeout )
+    {
+        long endTime = System.currentTimeMillis() + timeout;
+        while ( System.currentTimeMillis() < endTime )
+        {
+            ZKPinger pinger = null;
+            try
+            {
+                pinger = new ZKPinger();
+                pinger.waitForConnection( 5000 );
+                Thread.sleep( 2000 );
+                pinger.waitForConnection( 5000 );
+                Thread.sleep( 2000 );
+                pinger.waitForConnection( 5000 );
+                return true;
+            }
+            catch ( Exception e )
+            {
+                e.printStackTrace();
+                throw new ZooKeeperException( "Unable to create zoo keeper client", e );
+            }
+            finally
+            {
+                if ( pinger != null ) pinger.close();
+            }
+        }
+        return false;
+    }
+    
+    private class ZKPinger implements Watcher, Condition<Boolean, Exception>
+    {
+        private org.apache.zookeeper.ZooKeeper zk;
+        private volatile boolean isConnected;
+        
+        public ZKPinger() throws IOException
+        {
+            zk = new org.apache.zookeeper.ZooKeeper( getConnectionString(), 5000, this );
+        }
+        
+        public void waitForConnection( long timeout ) throws Exception
+        {
+            waitForCondition( this, 5000 );
+        }
+
+        @Override
+        public void process( WatchedEvent event )
+        {
+            isConnected = event.getState() == KeeperState.SyncConnected;
+        }
+
+        @Override
+        public Boolean tryToFullfill()
+        {
+            return isConnected ? Boolean.TRUE : null;
+        }
+
+        @Override
+        public Exception failure()
+        {
+            return new Exception( "Not connected" );
+        }
+        
+        private void close()
+        {
+            try
+            {
+                zk.close();
+            }
+            catch ( InterruptedException e )
+            {
+                Thread.interrupted();
+                // OK
+            }
+        }
     }
 
     public static void main( String[] args ) throws Exception

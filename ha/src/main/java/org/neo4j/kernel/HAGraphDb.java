@@ -22,6 +22,8 @@ package org.neo4j.kernel;
 import static org.neo4j.helpers.Exceptions.launderedException;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
+import static org.neo4j.kernel.ha.TimeUtil.sleepWithoutInterruption;
+import static org.neo4j.kernel.ha.TimeUtil.waitForCondition;
 import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
 
 import java.io.File;
@@ -64,6 +66,7 @@ import org.neo4j.kernel.ha.SlaveLockManager.SlaveLockManagerFactory;
 import org.neo4j.kernel.ha.SlaveRelationshipTypeCreator;
 import org.neo4j.kernel.ha.SlaveTxHook;
 import org.neo4j.kernel.ha.SlaveTxIdGenerator.SlaveTxIdGeneratorFactory;
+import org.neo4j.kernel.ha.TimeUtil.Condition;
 import org.neo4j.kernel.ha.ZooKeeperLastCommittedTxIdSetter;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperBroker;
@@ -275,19 +278,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         branchedDataPolicy.handle( this );
     }
 
-    private void sleepWithoutInterruption( long time, String errorMessage )
-    {
-        try
-        {
-            Thread.sleep( time );
-        }
-        catch ( InterruptedException e )
-        {
-            Thread.interrupted();
-            throw new RuntimeException( errorMessage, e );
-        }
-    }
-
     private void copyStoreFromMaster( Pair<Master, Machine> master ) throws Exception
     {
         getMessageLog().logMessage( "Copying store from master" );
@@ -317,21 +307,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         if ( localGraph != null ) return localGraph;
         int secondsWait = Math.max( HaConfig.getClientReadTimeoutFromConfig( config )-5, 5 );
         return waitForCondition( new LocalGraphAvailableCondition(), secondsWait*1000 );
-    }
-
-    private <T,E extends Exception> T waitForCondition( Condition<T,E> condition, int timeMillis ) throws E
-    {
-        long endTime = System.currentTimeMillis()+timeMillis;
-        T result = condition.tryToFullfill();
-        while ( result == null && System.currentTimeMillis() < endTime )
-        {
-            sleepWithoutInterruption( 1, "Failed waiting for " + condition + " to be fulfilled" );
-            result = condition.tryToFullfill();
-            if ( result != null ) return result;
-        }
-        E failure = condition.failure();
-        if ( failure != null ) throw failure;
-        return result;
     }
 
     private BrokerFactory defaultBrokerFactory()
@@ -451,13 +426,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                 if ( this.localGraph == null || !iAmCurrentlyMaster )
                 {   // I am currently a slave, so restart as master
                     internalShutdown( true );
-                    StoreId storeId = null;
-                    if ( noDb() )
-                    {
-                        if ( !allowInitCluster ) throw new ComException( "(Use another exception) was told to create cluster, but wasn't allowed" );
-                        storeId = createCluster();
-                        if ( storeId == null ) copyStoreFromMaster( master );
-                    }
+                    StoreId storeId = broker.getClusterStoreId();
                     newDb = startAsMaster( storeId );
                 }
                 // fire rebound event
@@ -470,11 +439,8 @@ public class HAGraphDb extends AbstractGraphDatabase
                 {   // I am currently master, so restart as slave.
                     // This will result in clearing of free ids from .id files, see SlaveIdGenerator.
                     internalShutdown( true );
-                    if ( noDb() )
-                    {
-                        copyStoreFromMaster( master );
-                    }
-                    newDb = startAsSlave( null, master );
+                    if ( noDb() ) copyStoreFromMaster( master );
+                    newDb = startAsSlave( broker.getClusterStoreId(), master );
                 }
                 else
                 {   // I am already a slave, so just forget the ids I got from the previous master
@@ -902,16 +868,16 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
     }
 
-    private StoreId createCluster()
-    {
-        StoreId myStoreId = new StoreId();
-        StoreId storeId = broker.createCluster( myStoreId );
-        return storeId.equals( myStoreId ) ?
-                // I am the first one here, so I'll create the db and the cluster in ZK
-                myStoreId :
-                // Someone else is the master, rather copy that store to here
-                null;
-    }
+//    private StoreId createCluster()
+//    {
+//        StoreId myStoreId = new StoreId();
+//        StoreId storeId = broker.createCluster( myStoreId );
+//        return storeId.equals( myStoreId ) ?
+//                // I am the first one here, so I'll create the db and the cluster in ZK
+//                myStoreId :
+//                // Someone else is the master, rather copy that store to here
+//                null;
+//    }
 
     public MasterServer getMasterServerIfMaster()
     {
@@ -1043,13 +1009,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         {
             return file.isDirectory() && file.getName().startsWith( BRANCH_PREFIX );
         }
-    }
-
-    private interface Condition<T, E extends Exception>
-    {
-        T tryToFullfill();
-
-        E failure();
     }
 
     private class LocalGraphAvailableCondition implements Condition<EmbeddedGraphDbImpl, RuntimeException>

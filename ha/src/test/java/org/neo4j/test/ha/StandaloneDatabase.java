@@ -74,6 +74,7 @@ public class StandaloneDatabase
                 HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase( storeDir,
                         config );
                 System.out.println( "Started HA db (w/ zoo keeper)" );
+                db.getConfig(); // Will wait for it to be started 
                 return db;
             }
         } )

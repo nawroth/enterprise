@@ -34,6 +34,8 @@ import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.KeeperException.NoNodeException;
+import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
@@ -258,7 +260,7 @@ public class ZooClient extends AbstractZooKeeperManager
             {
                 zooKeeper.getData( path, true, null );
             }
-            catch ( KeeperException e )
+            catch ( NoNodeException e )
             {
                 if ( e.code() == KeeperException.Code.NONODE )
                 {   // Create it if it doesn't exist
@@ -268,13 +270,17 @@ public class ZooClient extends AbstractZooKeeperManager
                     {
                         zooKeeper.create( path, data, ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT );
                     }
-                    catch ( KeeperException ce )
+                    catch ( NodeExistsException ne )
                     {
-                        if ( e.code() != KeeperException.Code.NODEEXISTS ) throw new ZooKeeperException( "Creation error", ce );
+                        // OK
                     }
                 }
                 else throw new ZooKeeperException( "Couldn't get or create " + child, e );
             }
+        }
+        catch ( KeeperException e )
+        {
+            throw new ZooKeeperException( "Unknown error", e );
         }
         catch ( InterruptedException e )
         {
@@ -407,7 +413,8 @@ public class ZooClient extends AbstractZooKeeperManager
                 {   // We have a local store, use and verify against it
                     NeoStoreUtil store = new NeoStoreUtil( getGraphDb().getStoreDir() );
                     committedTx = store.getLastCommittedTx();
-                    if ( !storeId.equals( store.asStoreId() ) ) throw new ZooKeeperException( "StoreId in database doesn't match that of the ZK cluster" );
+                    StoreId dbStoreId = store.asStoreId();
+                    if ( !storeId.equals( dbStoreId ) ) throw new ZooKeeperException( "StoreId in database " + dbStoreId + " doesn't match that of the ZK cluster " + storeId );
                 }
                 else
                 {   // No local store
