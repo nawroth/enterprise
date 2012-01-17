@@ -227,58 +227,6 @@ public class HAGraphDb extends AbstractGraphDatabase
         throw new RuntimeException( "Gave up trying to copy store from master", exception );
     }
     
-//    private synchronized void startUp( boolean allowInit )
-//    {
-//        StoreId storeId = null;
-//        if ( !new File( getStoreDir(), NeoStore.DEFAULT_NAME ).exists() )
-//        {   // Try for
-//            long endTime = System.currentTimeMillis()+60000;
-//            Exception exception = null;
-//            while ( System.currentTimeMillis() < endTime )
-//            {
-//                // Check if the cluster is up
-//                Pair<Master, Machine> master = broker.getMasterReally( true );
-//                if ( master != null && !master.other().equals( Machine.NO_MACHINE ) &&
-//                        master.other().getMachineId() != machineId )
-//                { // Join the existing cluster
-//                    try
-//                    {
-//                        copyStoreFromMaster( master );
-//                        getMessageLog().logMessage( "copied store from master" );
-//                        exception = null;
-//                        break;
-//                    }
-//                    catch ( Exception e )
-//                    {
-//                        exception = e;
-//                        master = broker.getMasterReally( true );
-//                        getMessageLog().logMessage( "Problems copying store from master", e );
-//                    }
-//                }
-//                else if ( allowInit )
-//                { // Try to initialize the cluster and become master
-//                    exception = null;
-//                    StoreId myStoreId = new StoreId();
-//                    storeId = broker.createCluster( myStoreId );
-//                    if ( storeId.equals( myStoreId ) )
-//                    { // I am master
-//                        break;
-//                    }
-//                }
-//                // I am not master, and could not connect to the master:
-//                // wait for other machine(s) to join.
-//                sleepWithoutInterruption( 300, "Startup interrupted" );
-//            }
-//
-//            if ( exception != null )
-//            {
-//                throw new RuntimeException( "Tried to join the cluster, but was unable to", exception );
-//            }
-//        }
-//        newMaster( storeId, new Exception( "Starting up for the first time" ) );
-//        localGraph();
-//    }
-
     void makeWayForNewDb()
     {
         this.getMessageLog().logMessage( "Cleaning database " + getStoreDir() + " (" + branchedDataPolicy.name() +
