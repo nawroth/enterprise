@@ -476,6 +476,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
             {
                 for (RelationshipField field : relFields)
                 {
+                    if ( !field.validFor( rel ) ) continue;
                     long otherId = field.relOf( old );
                     if (otherId == field.none)
                     {
@@ -506,6 +507,7 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
         }
         for ( RelationshipField field : relFields )
         {
+            if ( !field.validFor( rel ) ) continue;
             long otherId = field.relOf( rel );
             if ( otherId == field.none )
             {
@@ -916,6 +918,12 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
                 if ( other.getEndNode() == node ) return other.getEndNodeNextRel() == rel.getId();
                 return false;
             }
+            
+            @Override
+            boolean validFor( RelationshipRecord rel )
+            {
+                return !rel.isFirstInStartNodeChain(); 
+            }
         },
         SECOND_NEXT( false, Record.NO_NEXT_RELATIONSHIP, TARGET_NEXT_NOT_IN_USE, null, TARGET_NEXT_DIFFERENT_CHAIN )
         {
@@ -957,6 +965,12 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
                 if ( other.getEndNode() == node ) return other.getEndNodeNextRel() == rel.getId();
                 return false;
             }
+
+            @Override
+            boolean validFor( RelationshipRecord rel )
+            {
+                return !rel.isFirstInEndNodeChain(); 
+            }
         };
 
         private final ReferenceInconsistency notInUse, noBackReference, differentChain;
@@ -984,6 +998,11 @@ public abstract class ConsistencyCheck extends RecordStore.Processor implements 
         Long nodeOf( RelationshipRecord rel )
         {
             return null;
+        }
+        
+        boolean validFor( RelationshipRecord rel )
+        {
+            return true;
         }
     }
 }
