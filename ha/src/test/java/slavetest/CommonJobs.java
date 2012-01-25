@@ -967,4 +967,24 @@ public abstract class CommonJobs
             return result;
         }
     }
+    
+    public static class GetNamedReferenceNode extends AbstractJob<Long>
+    {
+        private final String name;
+        private final boolean allowCreate;
+
+        public GetNamedReferenceNode( String name, boolean allowCreate )
+        {
+            this.name = name;
+            this.allowCreate = allowCreate;
+        }
+
+        @Override
+        public Long execute( GraphDatabaseService db ) throws RemoteException
+        {
+            if ( allowCreate ) return db.getReferenceNode( name ).getId();
+            Node node = db.getReferenceNodeIfExists( name );
+            return node != null ? node.getId() : null;
+        }
+    }
 }

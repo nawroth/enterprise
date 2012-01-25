@@ -779,6 +779,13 @@ public abstract class AbstractHaTest
         pullUpdates();
     }
     
+    @Test
+    public void namedReferenceNodes() throws Exception
+    {
+        initializeDbs( 2 );
+        executeJob( new CommonJobs.GetNamedReferenceNode( "users", false ), 0 );
+    }
+    
     static class WorkerThread extends Thread
     {
         private final AbstractHaTest testCase;
