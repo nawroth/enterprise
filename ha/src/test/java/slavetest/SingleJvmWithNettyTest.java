@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,9 +19,29 @@
  */
 package slavetest;
 
+import static java.util.Arrays.asList;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import static org.neo4j.kernel.HaConfig.CONFIG_KEY_LOCK_READ_TIMEOUT;
+import static org.neo4j.kernel.HaConfig.CONFIG_KEY_READ_TIMEOUT;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+
 import org.junit.Ignore;
 import org.junit.Test;
 import org.neo4j.com.Client;
+import org.neo4j.com.Client.ConnectionLostHandler;
 import org.neo4j.com.Protocol;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
@@ -46,23 +66,6 @@ import org.neo4j.kernel.impl.transaction.LockType;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.kernel.impl.util.StringLogger;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.util.Collection;
-import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-
-import static java.util.Arrays.asList;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_LOCK_READ_TIMEOUT;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_READ_TIMEOUT;
-
 public class SingleJvmWithNettyTest extends SingleJvmTest
 {
     @Test
@@ -80,9 +83,13 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         final Machine masterMachine = new Machine( masterId, -1, 1, -1,
                 "localhost:" + Protocol.PORT );
         int readTimeout = getConfigInt( config, CONFIG_KEY_READ_TIMEOUT, TEST_READ_TIMEOUT );
-        final Master client = new MasterClient( masterMachine.getServer().first(), masterMachine.getServer().other(), graphDb,
+        final Master client = new MasterClient(
+                masterMachine.getServer().first(),
+                masterMachine.getServer().other(),
+                graphDb,
+                ConnectionLostHandler.NO_ACTION,
                 readTimeout, getConfigInt( config, CONFIG_KEY_LOCK_READ_TIMEOUT, readTimeout ),
-                Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT);
+                Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT );
         return new AbstractBroker( id, graphDb )
         {
             public boolean iAmMaster()
@@ -107,7 +114,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
             }
         };
     }
-    
+
     private int getConfigInt( Map<String, String> config, String key, int defaultValue )
     {
         String value = config.get( key );
@@ -154,10 +161,10 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
             }
         };
         t2.start();
-        
+
         t1.join();
         t2.join();
-        
+
         assertEquals( 2, countOccurences( "Opened a new channel", new File( dbPath( 1 ), StringLogger.DEFAULT_NAME ) ) );
     }
 
@@ -211,7 +218,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
             tx.finish();
         }
     }
-    
+
     private HighlyAvailableGraphDatabase getMasterHaDb()
     {
         PlaceHolderGraphDatabaseService db = (PlaceHolderGraphDatabaseService) getMaster().getGraphDb();
@@ -269,7 +276,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         }
         assertEquals( "wrong number of relationships", 2, relCount );
     }
-    
+
     @Test
     public void mastersMessagesLogShouldNotContainMentionsAboutAppliedTransactions() throws Exception
     {
@@ -306,7 +313,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         int slaveMachineId = addDb( MapUtil.stringMap(), false );
         awaitAllStarted();
         shutdownDb( slaveMachineId );
-        
+
         // Simulate an uncompleted copy by removing the "neostore" file as well as
         // the relationship store file f.ex.
         FileUtils.deleteFiles( dbPath( slaveMachineId ), "nioneo.*\\.v.*" );
@@ -315,38 +322,38 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         assertTrue( new File( dbPath( slaveMachineId ), "neostore.relationshipstore.db" ).delete() );
         File propertyStoreFile = new File( dbPath( slaveMachineId ), "neostore.propertystore.db" );
         FileUtils.truncateFile( propertyStoreFile, propertyStoreFile.length()/2 );
-        
+
         // Start the db again so that a full copy can be made again. Verification is
         // done @After
         startDb( slaveMachineId, MapUtil.stringMap(), true );
         awaitAllStarted();
     }
-    
+
     @Test
     public void failCommitLongGoingTxOnSlaveAfterMasterRestart() throws Exception
     {
         initializeDbs( 1 );
-        
+
         // Create a node on master
         GraphDatabaseService master = getMaster().getGraphDb();
         Transaction masterTx = master.beginTx();
         long masterNodeId = master.createNode().getId();
         masterTx.success(); masterTx.finish();
-        
+
         // Pull updates and begin tx on slave which sets a property on that node
-        // and creates one other node. Don't commit yet 
+        // and creates one other node. Don't commit yet
         HighlyAvailableGraphDatabase slave = (HighlyAvailableGraphDatabase) getSlave( 0 );
         slave.pullUpdates();
         Transaction slaveTx = slave.beginTx();
         slave.getNodeById( masterNodeId ).setProperty( "key", "value" );
         slave.index().forNodes( "name" ).add( slave.getNodeById( masterNodeId ), "key", "value" );
         long slaveNodeId = slave.createNode().getId();
-        
+
         // Restart the master
         getMasterHaDb().shutdown();
         ((PlaceHolderGraphDatabaseService)getMaster().getGraphDb()).setDb(
                 startUpMasterDb( MapUtil.stringMap() ).getDb() );
-        
+
         // Try to commit the tx from the slave and make sure it cannot do that
         slaveTx.success();
         try
@@ -355,7 +362,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
             fail( "Shouldn't be able to commit here" );
         }
         catch ( TransactionFailureException e ) { /* Good */ }
-        
+
         assertNull( slave.getNodeById( masterNodeId ).getProperty( "key", null ) );
         try
         {
@@ -363,14 +370,14 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         }
         catch ( NotFoundException e ) { /* Good */ }
     }
-    
+
     @Test
     public void committsAndRollbacksCountCorrectlyOnMaster() throws Exception
     {
         initializeDbs( 1 );
         GraphDatabaseService master = getMaster().getGraphDb();
         GraphDatabaseService slave = getSlave( 0 );
-        
+
         // A successful tx on the master should increment number of commits on master
         Pair<Integer, Integer> masterTxsBefore = getTransactionCounts( master );
         executeJobOnMaster( new CommonJobs.CreateNodeJob() );
@@ -382,7 +389,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         executeJob( new CommonJobs.CreateNodeJob(), 0 );
         assertEquals( Pair.of( masterTxsBefore.first()+1, masterTxsBefore.other() ), getTransactionCounts( master ) );
         assertEquals( Pair.of( slaveTxsBefore.first()+1, slaveTxsBefore.other() ), getTransactionCounts( slave ) );
-        
+
         // An unsuccessful tx on master should increment number of rollbacks on master
         masterTxsBefore = getTransactionCounts( master );
         executeJobOnMaster( new CommonJobs.CreateNodeJob( false ) );
@@ -395,7 +402,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         assertEquals( Pair.of( masterTxsBefore.first(), masterTxsBefore.other()+1 ), getTransactionCounts( master ) );
         assertEquals( Pair.of( slaveTxsBefore.first(), slaveTxsBefore.other()+1 ), getTransactionCounts( slave ) );
     }
-    
+
     @Test
     public void individuallyConfigurableLockReadTimeout() throws Exception
     {
@@ -404,7 +411,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         final Long nodeId = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
         final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         pullUpdates();
-        
+
         // Hold lock on master
         Thread lockHolder = new Thread( new Runnable()
         {
@@ -424,7 +431,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         lockHolder.start();
         DoubleLatch latch = latchFetcher.fetch();
         latch.awaitFirst();
-        
+
         // Try to get it on slave (should fail)
         long waitStart = System.currentTimeMillis();
         assertFalse( executeJob( new CommonJobs.SetNodePropertyJob( nodeId, "key", "value" ), 0 ) );
@@ -435,7 +442,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         assertTrue( "" + waitTime, waitTime < Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS*1000/2 );
         latch.countDownSecond();
     }
-    
+
     @Test
     public void useLockTimeoutForCleaningUpTransactions() throws Exception
     {
@@ -566,9 +573,34 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         }
     }
 
+    @Test
+    public void indexPutIfAbsent() throws Exception
+    {
+        initializeDbs( 2 );
+        long node = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
+        pullUpdates();
+
+        Worker t1 = new Worker( getSlave( 0 ) );
+        Worker t2 = new Worker( getSlave( 1 ) );
+        t1.beginTx();
+        t2.beginTx();
+        String index = "index";
+        String key = "key";
+        String value = "Mattias";
+        assertNull( t2.putIfAbsent( index, node, key, value ).get() );
+        Future<Node> futurePut = t1.putIfAbsent( index, node, key, value );
+        t1.waitUntilWaiting();
+        t2.finishTx( true );
+        assertNotNull( futurePut.get() );
+        t1.finishTx( true );
+
+        assertEquals( node, getSlave( 0 ).index().forNodes( index ).get( key, value ).getSingle().getId() );
+        assertEquals( node, getSlave( 1 ).index().forNodes( index ).get( key, value ).getSingle().getId() );
+    }
+
     private Pair<Integer, Integer> getTransactionCounts( GraphDatabaseService master )
     {
-        return Pair.of( 
+        return Pair.of(
                 ((AbstractGraphDatabase)master).getConfig().getTxModule().getCommittedTxCount(),
                 ((AbstractGraphDatabase)master).getConfig().getTxModule().getRolledbackTxCount() );
     }

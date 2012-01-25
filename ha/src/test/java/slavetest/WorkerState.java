@@ -17,40 +17,31 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.kernel.ha;
+package slavetest;
 
 import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.graphdb.Transaction;
 
-public class FakeSlaveBroker extends AbstractBroker
+public class WorkerState
 {
-    private final Master master;
+    final GraphDatabaseService db;
+    Transaction tx;
 
-    public FakeSlaveBroker( Master master, int masterMachineId, int myMachineId, GraphDatabaseService graphDb )
+    public WorkerState( GraphDatabaseService db )
     {
-        super( myMachineId, graphDb );
-        this.master = master;
+        this.db = db;
     }
 
-    public Pair<Master, Machine> getMaster()
+    public void beginTx()
     {
-        return Pair.<Master, Machine>of( master, Machine.NO_MACHINE );
+        assert tx == null;
+        tx = db.beginTx();
     }
-
-    public Pair<Master, Machine> getMasterReally( boolean allowChange )
+    
+    public void finishTx( boolean success )
     {
-        return Pair.<Master, Machine>of( master, Machine.NO_MACHINE );
-    }
-
-    public boolean iAmMaster()
-    {
-        return false;
-    }
-
-    public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
-    {
-        throw new UnsupportedOperationException();
+        assert tx != null;
+        if ( success ) tx.success();
+        tx.finish();
     }
 }

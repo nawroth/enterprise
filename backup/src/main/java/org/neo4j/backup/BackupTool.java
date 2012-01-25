@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -102,7 +102,11 @@ public class BackupTool
 
         if ( arguments.get( FROM, null ) == null )
         {
-            exitAbnormally( "Please specify " + dash( FROM ) );
+            exitAbnormally( "Please specify " + dash( FROM ) + ", examples:\n" +
+                    "  " + dash( FROM ) + " single://192.168.1.34\n" +
+                    "  " + dash( FROM ) + " single://192.168.1.34:1234\n" +
+                    "  " + dash( FROM ) + " ha://192.168.1.15:2181\n" +
+                    "  " + dash( FROM ) + " ha://192.168.1.15:2181,192.168.1.16:2181" );
         }
 
         if ( arguments.get( TO, null ) == null )
