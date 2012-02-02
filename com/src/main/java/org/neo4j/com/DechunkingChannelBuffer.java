@@ -19,7 +19,7 @@
  */
 package org.neo4j.com;
 
-import static org.neo4j.kernel.impl.util.Bits.numbersToString;
+import static org.neo4j.kernel.impl.util.Bits.numbersToBitString;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -134,12 +134,12 @@ public class DechunkingChannelBuffer implements ChannelBuffer
         if ( readInternalProtocolVersion != internalProtocolVersion )
         {
             throw new IllegalProtocolVersionException( "Unexpected internal protocol version " + readInternalProtocolVersion +
-                    ", expected " + internalProtocolVersion + ". Header:" + numbersToString( header ) );
+                    ", expected " + internalProtocolVersion + ". Header:" + numbersToBitString( header ) );
         }
         if ( header[1] != applicationProtocolVersion )
         {
             throw new IllegalProtocolVersionException( "Unexpected application protocol version " + header[1] +
-                    ", expected " + applicationProtocolVersion + ". Header:" + numbersToString( header ) );
+                    ", expected " + applicationProtocolVersion + ". Header:" + numbersToBitString( header ) );
         }
     }
 
