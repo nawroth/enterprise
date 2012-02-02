@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -18,6 +18,8 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 package org.neo4j.com;
+
+import static org.neo4j.kernel.impl.util.Bits.numbersToString;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -89,6 +91,12 @@ public class DechunkingChannelBuffer implements ChannelBuffer
     private void readNextChunk()
     {
         ChannelBuffer readBuffer = readNext();
+        
+        /* Header layout:
+         * [    ,    ][    ,   x] 0: last chunk in message, 1: there a more chunks after this one
+         * [    ,    ][    ,  x ] 0: success, 1: failure
+         * [    ,    ][xxxx,xx  ] internal protocol version
+         * [xxxx,xxxx][    ,    ] application protocol version */
         byte[] header = new byte[2];
         readBuffer.readBytes( header );
         more = (header[0] & 0x1) != 0;
@@ -126,12 +134,12 @@ public class DechunkingChannelBuffer implements ChannelBuffer
         if ( readInternalProtocolVersion != internalProtocolVersion )
         {
             throw new IllegalProtocolVersionException( "Unexpected internal protocol version " + readInternalProtocolVersion +
-                    ", expected " + internalProtocolVersion );
+                    ", expected " + internalProtocolVersion + ". Header:" + numbersToString( header ) );
         }
         if ( header[1] != applicationProtocolVersion )
         {
             throw new IllegalProtocolVersionException( "Unexpected application protocol version " + header[1] +
-                    ", expected " + applicationProtocolVersion );
+                    ", expected " + applicationProtocolVersion + ". Header:" + numbersToString( header ) );
         }
     }
 
@@ -147,6 +155,9 @@ public class DechunkingChannelBuffer implements ChannelBuffer
         {
             throw new ComException( "Couldn't read failure response", e );
         }
+        
+        if ( cause instanceof RuntimeException ) throw (RuntimeException) cause;
+        if ( cause instanceof Error ) throw (Error) cause;
         throw new ComException( cause );
     }
 

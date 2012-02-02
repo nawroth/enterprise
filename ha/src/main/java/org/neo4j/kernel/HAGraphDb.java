@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,16 +19,19 @@
  */
 package org.neo4j.kernel;
 
+import static org.neo4j.com.SlaveContext.lastAppliedTx;
 import static org.neo4j.helpers.Exceptions.launderedException;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
-import static org.neo4j.kernel.ha.TimeUtil.sleepWithoutInterruption;
 import static org.neo4j.kernel.ha.TimeUtil.waitForCondition;
 import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
 
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +45,7 @@ import org.neo4j.com.ComException;
 import org.neo4j.com.MasterUtil;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.SlaveContext.Tx;
 import org.neo4j.com.ToFileStoreWriter;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
@@ -55,6 +59,7 @@ import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.ha.BranchedDataException;
 import org.neo4j.kernel.ha.Broker;
 import org.neo4j.kernel.ha.BrokerFactory;
+import org.neo4j.kernel.ha.ClusterClient;
 import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.ha.MasterIdGeneratorFactory;
 import org.neo4j.kernel.ha.MasterServer;
@@ -70,11 +75,15 @@ import org.neo4j.kernel.ha.TimeUtil.Condition;
 import org.neo4j.kernel.ha.ZooKeeperLastCommittedTxIdSetter;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperBroker;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
+import org.neo4j.kernel.impl.nioneo.store.FileSystemAbstraction;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
+import org.neo4j.kernel.impl.transaction.AbstractTransactionManager;
 import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
+import org.neo4j.kernel.impl.transaction.xaframework.LogIoUtils;
 import org.neo4j.kernel.impl.transaction.xaframework.NoSuchLogVersionException;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 import org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog;
@@ -84,13 +93,17 @@ import org.neo4j.kernel.impl.util.StringLogger;
 public class HAGraphDb extends AbstractGraphDatabase
         implements GraphDatabaseService, ResponseReceiver
 {
+    private static final int STORE_COPY_RETRIES = 3;
+    private static final int NEW_MASTER_STARTUP_RETRIES = 3;
+
     private final Map<String, String> config;
     private final BrokerFactory brokerFactory;
-    private volatile Broker broker;
+    private final Broker broker;
+    private ClusterClient clusterClient;
     private volatile EmbeddedGraphDbImpl localGraph;
     private final int machineId;
     private volatile MasterServer masterServer;
-    private ScheduledExecutorService updatePuller;
+    private volatile ScheduledExecutorService updatePuller;
     private volatile long updateTime = 0;
     private volatile Throwable causeOfShutdown;
     private final long startupTime;
@@ -110,18 +123,28 @@ public class HAGraphDb extends AbstractGraphDatabase
             new CopyOnWriteArraySet<TransactionEventHandler<?>>();
 
     /**
-     * Will instantiate its own ZooKeeper broker
+     * Will instantiate its own ZooKeeper broker and ClusterClient
      */
     public HAGraphDb( String storeDir, Map<String, String> config )
     {
-        this( storeDir, config, null );
+        this( storeDir, config, null, null );
     }
 
     /**
-     * Only for testing
+     * ONLY FOR TESTING
+     * Will instantiate its own ClusterClient
      */
     public HAGraphDb( String storeDir, Map<String, String> config,
             BrokerFactory brokerFactory )
+    {
+        this( storeDir, config, brokerFactory, null );
+    }
+
+    /**
+     * ONLY FOR TESTING
+     */
+    public HAGraphDb( String storeDir, Map<String, String> config,
+            BrokerFactory brokerFactory, ClusterClient clusterManager )
     {
         super( storeDir );
         if ( config == null )
@@ -138,11 +161,13 @@ public class HAGraphDb extends AbstractGraphDatabase
         config.put( Config.KEEP_LOGICAL_LOGS, "true" );
         this.brokerFactory = brokerFactory != null ? brokerFactory : defaultBrokerFactory();
         this.broker = this.brokerFactory.create( this, config );
+        this.clusterClient = clusterManager != null ? clusterManager
+                : defaultClusterManager();
+        this.pullUpdates = false;
         
         // Start a thread just to kick-start the process of starting up.
         // ZooKeeper should be able to do this fine on its own though.
         kickstartStartupProcess();
-        this.pullUpdates = false;
     }
 
     private void kickstartStartupProcess()
@@ -197,16 +222,27 @@ public class HAGraphDb extends AbstractGraphDatabase
         } );
     }
 
-    private void getFreshDatabaseFromMaster( )
+    private void getFreshDatabaseFromMaster( boolean branched )
     {
-        Pair<Master, Machine> master = broker.getMasterReally( true );
+        /*
+         * Use the cluster client here instead of the broker provided master client.
+         * The problem is that clients from the broker are shutdown when zk hiccups
+         * so the channel is closed and the copy operation fails. Clients provided from
+         * the clusterClient do not suffer from that - after getting hold of such an
+         * object, even if the zk cluster goes down the operation will succeed, dependent
+         * only on the source machine being alive. If, in the meantime, the master changes
+         * then the verification after the new master election will call us again.
+         */
+        Pair<Master, Machine> master = clusterClient.getMasterClient();
         // Assume it's shut down at this point
-
         internalShutdown( false );
-        makeWayForNewDb();
+        if ( branched )
+        {
+            makeWayForNewDb();
+        }
 
         Exception exception = null;
-        for ( int i = 0; i < 60; i++ )
+        for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
         {
             try
             {
@@ -219,7 +255,8 @@ public class HAGraphDb extends AbstractGraphDatabase
                 getMessageLog().logMessage( "Problems copying store from master", e );
                 sleepWithoutInterruption( 1000, "" );
                 exception = e;
-                master = broker.getMasterReally( true );
+                master = clusterClient.getMasterClient();
+                BranchedDataPolicy.keep_none.handle( this );
             }
         }
         throw new RuntimeException( "Gave up trying to copy store from master", exception );
@@ -232,10 +269,127 @@ public class HAGraphDb extends AbstractGraphDatabase
         branchedDataPolicy.handle( this );
     }
 
-    private void copyStoreFromMaster( Pair<Master, Machine> master ) throws Exception
+    private void checkAndRecoverCorruptLogs( EmbeddedGraphDbImpl localDb,
+            boolean copiedStore )
+    {
+        getMessageLog().logMessage( "Checking for log consistency" );
+        /*
+         * We are going over all data sources and try to retrieve the latest transaction. If that fails then
+         * the logs might be missing or corrupt. Try to recover by asking the master for the transaction and
+         * either patch the current log file or recreate the missing one.
+         */
+        XaDataSource dataSource = localDb.getConfig().getTxModule().getXaDataSourceManager().getXaDataSource(
+                Config.DEFAULT_DATA_SOURCE_NAME );
+        getMessageLog().logMessage(
+                "Checking dataSource " + dataSource.getName() );
+        boolean corrupted = false;
+        long version = -1; // the log version, -1 indicates current log
+        long myLastCommittedTx = dataSource.getLastCommittedTxId();
+        if ( myLastCommittedTx == 1 )
+        {
+            // The case of a brand new store, nothing to do
+            return;
+        }
+        try
+        {
+            int masterId = dataSource.getMasterForCommittedTx( myLastCommittedTx ).first();
+            if ( masterId == -1 )
+            {
+                corrupted = true;
+            }
+        }
+        catch ( NoSuchLogVersionException e )
+        {
+            getMessageLog().logMessage(
+                    "Missing log version " + e.getVersion()
+                               + " for transaction " + myLastCommittedTx
+                               + " and datasource " + dataSource.getName() );
+            corrupted = true;
+            version = e.getVersion();
+        }
+        catch ( IOException e )
+        {
+            getMessageLog().logMessage(
+                    "IO exceptions while trying to retrieve the master for the latest txid (= "
+                            + myLastCommittedTx + " )", e );
+        }
+        catch ( RuntimeException e )
+        {
+            getMessageLog().logMessage(
+                    "Runtime exception while getting master id for"
+                               + " for transaction " + myLastCommittedTx
+                               + " and datasource " + dataSource.getName(), e );
+            corrupted = true;
+            /*
+             * We have no available way to know where it should be - just
+             * overwrite the last one
+             */
+            version = dataSource.getCurrentLogVersion() - 1;
+        }
+        if ( corrupted )
+        {
+            if ( version != -1 )
+            {
+                getMessageLog().logMessage(
+                        "Logical log file for transaction "
+                                   + myLastCommittedTx + " not found." );
+            }
+            else
+            {
+                getMessageLog().logMessage(
+                        "Tried to extract transaction "
+                                   + myLastCommittedTx
+                                   + " but it was not present in the log. Trying to retrieve it from master." );
+            }
+            if ( copiedStore )
+            {
+                /*
+                 *  We copied the store, so there may be pending stuff to write to disk. No point in
+                 *  checking for log existence/sanity, since even if an error is detected we can
+                 *  attribute it to the copy operation being in progress. Just warn then.
+                 */
+                getMessageLog().logMessage(
+                        "A store copy might be in progress. Will not act on the apparent corruption" );
+            }
+            else
+            {
+                try
+                {
+                    copyLogFromMaster( broker.getMaster(),
+                            Config.DEFAULT_DATA_SOURCE_NAME, version,
+                            myLastCommittedTx, myLastCommittedTx );
+                    // Rechecking, might cost something extra but worth it
+                    dataSource.getMasterForCommittedTx( myLastCommittedTx );
+                    getMessageLog().logMessage(
+                            "Log copy finished without problems" );
+                }
+                catch ( Exception e )
+                {
+                    getMessageLog().logMessage(
+                            "Failed to retrieve log version "
+                                       + version + " from master.", e );
+                }
+            }
+        }
+    }
+
+    private void sleepWithoutInterruption( long time, String errorMessage )
+    {
+        try
+        {
+            Thread.sleep( time );
+        }
+        catch ( InterruptedException e )
+        {
+            throw new RuntimeException( errorMessage, e );
+        }
+    }
+
+    private void copyStoreFromMaster( Pair<Master, Machine> master )
+            throws Exception
     {
         getMessageLog().logMessage( "Copying store from master" );
-        Response<Void> response = master.first().copyStore( new SlaveContext( 0, machineId, 0, new Pair[0] ),
+        Response<Void> response = master.first().copyStore( emptyContext(),
                 new ToFileStoreWriter( getStoreDir() ) );
         long highestLogVersion = highestLogVersion();
         if ( highestLogVersion > -1 ) NeoStore.setVersion( getStoreDir(), highestLogVersion + 1 );
@@ -249,6 +403,57 @@ public class HAGraphDb extends AbstractGraphDatabase
             copiedDb.shutdown();
         }
         getMessageLog().logMessage( "Done copying store from master" );
+    }
+
+    private SlaveContext emptyContext()
+    {
+        return new SlaveContext( 0, machineId, 0, new Tx[0], 0, 0 );
+    }
+
+    /**
+     * Tries to get a set of transactions for a specific data source from the
+     * master and possibly write it out as a versioned log file. Useful for
+     * recovering your damaged or missing log files.
+     *
+     * @param master The master to retrieve transactions from
+     * @param datasource The datasource for which the txs to retrieve
+     * @param logVersion The version of the log to rebuild, with -1 indicating
+     *            apply to current one
+     * @param startTxId The first tx to retrieve
+     * @param endTxId The last tx to retrieve
+     * @throws Exception
+     */
+    private void copyLogFromMaster( Pair<Master, Machine> master,
+            String datasource, long logVersion, long startTxId, long endTxId )
+            throws Exception
+    {
+        Response<Void> response = master.first().copyTransactions( emptyContext(), datasource,
+                startTxId, endTxId );
+        if ( logVersion == -1 )
+        {
+            // No log version, just apply to the latest one
+            receive( response );
+            return;
+        }
+        XaDataSource ds = localGraph().getConfig().getTxModule().getXaDataSourceManager().getXaDataSource(
+                datasource );
+        FileChannel newLog = ( (FileSystemAbstraction) localGraph().getConfig().getParams().get(
+                FileSystemAbstraction.class ) ).create( ds.getFileName( logVersion ) );
+        newLog.truncate( 0 );
+        ByteBuffer scratch = ByteBuffer.allocate( 64 );
+        LogIoUtils.writeLogHeader( scratch, logVersion, startTxId );
+        // scratch buffer is flipped by writeLogHeader
+        newLog.write( scratch );
+        ReadableByteChannel received = response.transactions().next().third().extract();
+        scratch.flip();
+        while ( received.read( scratch ) > 0 )
+        {
+            scratch.flip();
+            newLog.write( scratch );
+            scratch.flip();
+        }
+        newLog.force( false );
+        newLog.close();
     }
 
     private long highestLogVersion()
@@ -273,6 +478,13 @@ public class HAGraphDb extends AbstractGraphDatabase
                 return new ZooKeeperBroker( graphDb, config, HAGraphDb.this );
             }
         };
+    }
+
+    private ClusterClient defaultClusterManager()
+    {
+        return new ZooKeeperClusterClient(
+                HaConfig.getCoordinatorsFromConfig( config ),
+                HaConfig.getClusterNameFromConfig( config ), this );
     }
 
     public Broker getBroker()
@@ -314,7 +526,15 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         catch ( ComException e )
         {
-            newMaster( e );
+            /*
+             * A ComException means connection to the master could not be established.
+             * It is generally wrong to take this a sign to perform master election. The
+             * failure might be transient, the broker data might not be updated yet (a
+             * very real possibility for ZK specific installations) etc. So just throw the
+             * exception and hope that if the failure is real newMaster() will be called
+             * eventually
+             */
+            // newMaster( e );
             throw e;
         }
     }
@@ -352,16 +572,17 @@ public class HAGraphDb extends AbstractGraphDatabase
      * cluster and starts it again. Should be called in case a ConnectionExpired
      * event is received, this is the equivalent of building the ZK connection
      * from start. Also triggers a master reelect, to make sure that the state
-     * ZK ended up in during our absence is respected.
+     * ZK ended up in during our absence is respected. The cluster manager is
+     * not used outside of startup where this call should not happen and also it
+     * doesn't keep a zoo client open - so is no reason to recreate it
      */
     @Override
     public void reconnect( Exception e )
     {
         if ( broker != null )
         {
-            broker.shutdown();
+            broker.restart();
         }
-        this.broker = brokerFactory.create( this, config );
         newMaster( e );
     }
 
@@ -400,9 +621,6 @@ public class HAGraphDb extends AbstractGraphDatabase
                 {   // I am already a slave, so just forget the ids I got from the previous master
                     ((SlaveIdGeneratorFactory) getConfig().getIdGeneratorFactory()).forgetIdAllocationsFromMaster();
                 }
-
-                ensureDataConsistencyWithMaster( newDb != null ? newDb : localGraph, master );
-                getMessageLog().logMessage( "Data consistent with master" );
             }
             if ( newDb != null )
             {
@@ -410,18 +628,21 @@ public class HAGraphDb extends AbstractGraphDatabase
 
                 // Assign the db last
                 this.localGraph = newDb;
-
-                /*
-                 * We have to instantiate the update puller after the local db has been assigned.
-                 * Another way to do it is to wait on a LocalGraphAvailableCondition. I chose this,
-                 * it is simpler to follow, provided you know what a volatile does.
-                 */
-                if ( masterServer == null )
-                {
-                    // The above being true means we are a slave
-                    instantiateAutoUpdatePullerIfConfigSaysSo();
-                    pullUpdates = true;
-                }
+            }
+            /*
+             * We have to instantiate the update puller after the local db has been assigned.
+             * Another way to do it is to wait on a LocalGraphAvailableCondition. I chose this,
+             * it is simpler to follow, provided you know what a volatile does.
+             */
+            if ( masterServer == null )
+            {
+                // The above being true means we are a slave
+                instantiateAutoUpdatePullerIfConfigSaysSo();
+                pullUpdates = true;
+                checkAndRecoverCorruptLogs( localGraph, false );
+                ensureDataConsistencyWithMaster( newDb != null ? newDb
+                        : localGraph, master );
+                getMessageLog().logMessage( "Data consistent with master" );
             }
         }
         catch ( Throwable t )
@@ -528,8 +749,12 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         catch ( NoSuchLogVersionException e )
         {
-            getMessageLog().logMessage( "Logical log file for txId " + myLastCommittedTx +
-                " not found, perhaps due to the db being copied from master. Ignoring." );
+            getMessageLog().logMessage(
+                    "Logical log file for txId "
+                            + myLastCommittedTx
+                               + " missing [version="
+                               + e.getVersion()
+                               + "]. If this is startup then it will be recovered later, otherwise it might be a problem." );
             return;
         }
         catch ( IOException e )
@@ -539,6 +764,9 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         catch ( Exception e )
         {
+            getMessageLog().logMessage(
+                    "Exception while getting master ID for txId "
+                            + myLastCommittedTx + ".", e );
             throw new BranchedDataException( "Maybe not branched data, but it could solve it", e );
         }
 
@@ -586,7 +814,7 @@ public class HAGraphDb extends AbstractGraphDatabase
     private void instantiateAutoUpdatePullerIfConfigSaysSo()
     {
         long pullInterval = HaConfig.getPullIntervalFromConfig( config );
-        if ( pullInterval > 0 )
+        if ( pullInterval > 0 && updatePuller == null )
         {
             updatePuller = new ScheduledThreadPoolExecutor( 1 );
             updatePuller.scheduleWithFixedDelay( new Runnable()
@@ -594,12 +822,13 @@ public class HAGraphDb extends AbstractGraphDatabase
                 @Override
                 public void run()
                 {
+                    if ( !pullUpdates )
+                    {
+                        return;
+                    }
                     try
                     {
-                        if ( pullUpdates )
-                        {
-                            pullUpdates();
-                        }
+                        pullUpdates();
                     }
                     catch ( Exception e )
                     {
@@ -679,6 +908,8 @@ public class HAGraphDb extends AbstractGraphDatabase
             }
             getMessageLog().logMessage( "Internal shutdown updatePuller DONE",
                     true );
+            // Do not skip this, update puller == null means it has been
+            // shutdown
             this.updatePuller = null;
         }
         if ( this.masterServer != null )
@@ -690,6 +921,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         if ( this.localGraph != null )
         {
+            ((AbstractTransactionManager)localGraph.getConfig().getTxModule().getTxManager()).attemptWaitForTxCompletionAndBlockFutureTransactions( 7000 );
             if ( rotateLogs )
             {
                 for ( XaDataSource dataSource : getConfig().getTxModule().getXaDataSourceManager().getAllRegisteredDataSources() )
@@ -746,17 +978,28 @@ public class HAGraphDb extends AbstractGraphDatabase
     public SlaveContext getSlaveContext( int eventIdentifier )
     {
         // Constructs a slave context from scratch.
-        XaDataSourceManager localDataSourceManager =
-            getConfig().getTxModule().getXaDataSourceManager();
-        Collection<XaDataSource> dataSources = localDataSourceManager.getAllRegisteredDataSources();
-        @SuppressWarnings("unchecked")
-        Pair<String, Long>[] txs = new Pair[dataSources.size()];
-        int i = 0;
-        for ( XaDataSource dataSource : dataSources )
+        try
         {
-            txs[i++] = Pair.of( dataSource.getName(), dataSource.getLastCommittedTxId() );
+            XaDataSourceManager localDataSourceManager =
+                getConfig().getTxModule().getXaDataSourceManager();
+            Collection<XaDataSource> dataSources = localDataSourceManager.getAllRegisteredDataSources();
+            @SuppressWarnings("unchecked")
+            Tx[] txs = new Tx[dataSources.size()];
+            int i = 0;
+            Pair<Integer,Long> master = null;
+            for ( XaDataSource dataSource : dataSources )
+            {
+                long txId = dataSource.getLastCommittedTxId();
+                if ( dataSource.getName().equals( Config.DEFAULT_DATA_SOURCE_NAME ) )
+                    master = dataSource.getMasterForCommittedTx( txId );
+                txs[i++] = lastAppliedTx( dataSource.getName(), txId );
+            }
+            return new SlaveContext( startupTime, machineId, eventIdentifier, txs, master.first(), master.other() );
         }
-        return new SlaveContext( startupTime, machineId, eventIdentifier, txs );
+        catch ( IOException e )
+        {
+            throw new RuntimeException( e );
+        }
     }
 
     @Override
@@ -776,50 +1019,75 @@ public class HAGraphDb extends AbstractGraphDatabase
     }
 
     @Override
-    public void newMaster( Exception e )
+    public void handle( Exception e )
     {
-        try
-        {
-            doNewMaster( e );
-        }
-        catch ( BranchedDataException bde )
-        {
-            getMessageLog().logMessage( "Branched data occured, retrying" );
-            getFreshDatabaseFromMaster();
-            doNewMaster( bde );
-        }
+        newMaster( e );
     }
 
-    private void doNewMaster( Exception e )
+    @Override
+    public synchronized void newMaster( Exception e )
     {
-        try
+        /* MP: This is from BranchDetectingTxVerifier which can report branched data via a
+         * BranchedDataException embedded inside a ComException (just to pass through the usual
+         * code paths w/o any additional code). Feel free to refactor to get rid of this packing */
+        if ( e instanceof ComException && e.getCause() instanceof BranchedDataException )
         {
-            getMessageLog().logMessage( "newMaster called", true );
-            reevaluateMyself();
+            BranchedDataException bde = (BranchedDataException) e.getCause();
+            getMessageLog().logMessage( "Master says I've got branched data: " + bde );
         }
-        catch ( ZooKeeperException ee )
+
+        Throwable cause = null;
+        int i = 0;
+        while ( i++ < NEW_MASTER_STARTUP_RETRIES )
         {
-            getMessageLog().logMessage( "ZooKeeper exception in newMaster", ee );
-            throw Exceptions.launderedException( ee );
+            try
+            {
+                getMessageLog().logMessage( "newMaster called", e, true );
+                reevaluateMyself();
+                return;
+            }
+            catch ( ZooKeeperException zke )
+            {
+                getMessageLog().logMessage(
+                        "ZooKeeper exception in newMaster, retry #" + i, zke );
+                e = zke;
+                cause = zke;
+                sleepWithoutInterruption( 500, "" );
+                continue;
+            }
+            catch ( ComException ce )
+            {
+                getMessageLog().logMessage(
+                        "Communication exception in newMaster, retry #" + i, ce );
+                e = ce;
+                cause = ce;
+                sleepWithoutInterruption( 500, "" );
+                continue;
+            }
+            catch ( BranchedDataException bde )
+            {
+                getMessageLog().logMessage(
+                        "Branched data occurred, during newMaster retry #" + i,
+                        bde );
+                getFreshDatabaseFromMaster( true /*branched*/);
+                e = bde;
+                cause = bde;
+                continue;
+            }
+            catch ( Throwable t )
+            {
+                cause = t;
+                break;
+            }
         }
-        catch ( ComException ee )
+        if ( cause != null && i == NEW_MASTER_STARTUP_RETRIES )
         {
-            getMessageLog().logMessage( "Communication exception in newMaster", ee );
-            throw Exceptions.launderedException( ee );
+            getMessageLog().logMessage(
+                    "Reevaluation ended in unknown exception " + cause
+                            + " so shutting down", cause, true );
+            shutdown( cause, false );
         }
-        catch ( BranchedDataException ee )
-        {
-            throw ee;
-        }
-        // BranchedDataException will escape from this method since the catch clause below
-        // sees to that.
-        catch ( Throwable t )
-        {
-            getMessageLog().logMessage( "Reevaluation ended in unknown exception " + t
-                    + " so shutting down", t, true );
-            shutdown( t, false );
-            throw Exceptions.launderedException( t );
-        }
+        throw Exceptions.launderedException( cause );
     }
 
     public MasterServer getMasterServerIfMaster()

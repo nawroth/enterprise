@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,6 +19,13 @@
  */
 package slavetest;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+
 import org.junit.After;
 import org.junit.Ignore;
 import org.neo4j.graphdb.GraphDatabaseService;
@@ -30,16 +37,11 @@ import org.neo4j.kernel.HAGraphDb;
 import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.Broker;
+import org.neo4j.kernel.ha.ClusterClient;
+import org.neo4j.kernel.ha.FakeClusterClient;
 import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.FakeSlaveBroker;
 import org.neo4j.kernel.ha.MasterImpl;
-
-import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 
 @Ignore( "SingleJvmWithNettyTest covers this and more" )
 public class SingleJvmTest extends AbstractHaTest
@@ -73,8 +75,10 @@ public class SingleJvmTest extends AbstractHaTest
         cfg.put( HaConfig.CONFIG_KEY_SERVER_ID, Integer.toString(machineId) );
         cfg.put( Config.KEEP_LOGICAL_LOGS, "true" );
         addDefaultReadTimeout( cfg );
-        HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase( new HAGraphDb(
-                slavePath.getAbsolutePath(), cfg, wrapBrokerAndSetPlaceHolderDb( placeHolderDb, broker ) ) );
+        HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase(
+                new HAGraphDb( slavePath.getAbsolutePath(), cfg,
+                        wrapBrokerAndSetPlaceHolderDb( placeHolderDb, broker ),
+                        makeMasterClusterClientFromBroker( broker ) ) );
         placeHolderDb.setDb( db );
         haDbs.set( machineId-1, db );
     }
@@ -107,18 +111,20 @@ public class SingleJvmTest extends AbstractHaTest
     {
         master = new MasterImpl( startUpMasterDb( extraConfig ), extraConfig );
     }
-    
+
     protected PlaceHolderGraphDatabaseService startUpMasterDb( Map<String, String> extraConfig ) throws Exception
     {
         int masterId = 0;
         Map<String, String> config = MapUtil.stringMap( extraConfig,
-                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ));
+                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ) );
         addDefaultReadTimeout( config );
         String path = dbPath( 0 ).getAbsolutePath();
         PlaceHolderGraphDatabaseService placeHolderDb = new PlaceHolderGraphDatabaseService( path );
         Broker broker = makeMasterBroker( masterId, placeHolderDb, config );
-        HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase( new HAGraphDb(
-                path, config, wrapBrokerAndSetPlaceHolderDb( placeHolderDb, broker ) ) );
+        HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase(
+                new HAGraphDb( path, config, wrapBrokerAndSetPlaceHolderDb(
+                        placeHolderDb, broker ),
+                        makeMasterClusterClientFromBroker( broker ) ) );
         placeHolderDb.setDb( db );
         return placeHolderDb;
     }
@@ -131,7 +137,8 @@ public class SingleJvmTest extends AbstractHaTest
         }
     }
 
-    protected Broker makeMasterBroker( int masterId, GraphDatabaseService graphDb, Map<String, String> config )
+    protected Broker makeMasterBroker( int masterId,
+            AbstractGraphDatabase graphDb, Map<String, String> config )
     {
         return new FakeMasterBroker( masterId, graphDb, config );
     }
@@ -139,6 +146,11 @@ public class SingleJvmTest extends AbstractHaTest
     protected Broker makeSlaveBroker( MasterImpl master, int masterId, int id, AbstractGraphDatabase graphDb, Map<String, String> config )
     {
         return new FakeSlaveBroker( master, masterId, id, graphDb );
+    }
+
+    protected ClusterClient makeMasterClusterClientFromBroker( Broker broker )
+    {
+        return new FakeClusterClient( broker );
     }
 
     protected MasterImpl getMaster()

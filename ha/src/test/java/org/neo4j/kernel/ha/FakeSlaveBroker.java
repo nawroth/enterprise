@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,57 +19,45 @@
  */
 package org.neo4j.kernel.ha;
 
-import java.util.Map;
-
-import org.neo4j.com.Protocol;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
-public class FakeMasterBroker extends AbstractBroker
+public class FakeSlaveBroker extends AbstractBroker
 {
-    private Map<String, String> config;
-    public static final StoreId STORE_ID = new StoreId();
+    private final Master master;
 
-    public FakeMasterBroker( int myMachineId, GraphDatabaseService graphDb, Map<String, String> config )
+    public FakeSlaveBroker( Master master, int masterMachineId,
+            int myMachineId, AbstractGraphDatabase graphDb )
     {
         super( myMachineId, graphDb );
-        this.config = config;
+        this.master = master;
     }
-
+    
     @Override
     public StoreId getClusterStoreId()
     {
-        return STORE_ID; // Master will always win
-    }
-
-    public Machine getMasterMachine()
-    {
-        return new Machine( getMyMachineId(), 0, 1, -1, null );
+        return FakeMasterBroker.STORE_ID;
     }
 
     public Pair<Master, Machine> getMaster()
     {
-        return Pair.<Master, Machine>of( null, new Machine( getMyMachineId(), 0, 1, -1, null ) );
-        // throw new UnsupportedOperationException( "I am master" );
+        return Pair.<Master, Machine>of( master, Machine.NO_MACHINE );
     }
 
     public Pair<Master, Machine> getMasterReally( boolean allowChange )
     {
-        return Pair.<Master, Machine>of( null, new Machine( getMyMachineId(), 0, 1, -1, null ) );
+        return Pair.<Master, Machine>of( master, Machine.NO_MACHINE );
     }
 
     public boolean iAmMaster()
     {
-        return getMyMachineId() == 0;
+        return false;
     }
 
     public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
     {
-        return new MasterServer( new MasterImpl( graphDb, config ), Protocol.PORT, graphDb.getMessageLog(),
-                HaConfig.getClientLockReadTimeoutFromConfig( config ) );
+        throw new UnsupportedOperationException();
     }
 }

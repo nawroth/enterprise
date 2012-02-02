@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -44,7 +44,7 @@ import org.neo4j.helpers.Format;
 import org.neo4j.helpers.Predicate;
 import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.ha.TimeUtil.Condition;
-import org.neo4j.kernel.ha.zookeeper.ClusterManager;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.subprocess.SubProcess;
@@ -83,7 +83,7 @@ public final class LocalhostZooKeeperCluster
             if ( !success ) shutdown();
         }
     }
-    
+
     public static LocalhostZooKeeperCluster standardZoo( Class<?> owningTest)
     {
         while ( true )
@@ -112,10 +112,11 @@ public final class LocalhostZooKeeperCluster
         timeout = System.currentTimeMillis() + unit.toMillis( timeout );
         do
         {
-            ClusterManager cm = null;
+            ZooKeeperClusterClient cm = null;
             try
             {
-                cm = new ClusterManager( getConnectionString(), HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME );
+                cm = new ZooKeeperClusterClient( getConnectionString(),
+                        HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME );
                 cm.waitForSyncConnected();
                 break;
             }
@@ -189,6 +190,7 @@ public final class LocalhostZooKeeperCluster
                 conf.println( "tickTime=2000" );
                 conf.println( "initLimit=10" );
                 conf.println( "syncLimit=5" );
+                conf.println( "maxClientCnxns=30" );
 
                 // On Windows the backslashes will have to be escaped for
                 // ZooKeeper to interpret them correctly.
@@ -310,8 +312,7 @@ public final class LocalhostZooKeeperCluster
 
     public static void main( String[] args ) throws Exception
     {
-        LocalhostZooKeeperCluster cluster = new LocalhostZooKeeperCluster( ZooKeeperProcess.class,
-                2181, 2182, 2183 );
+        LocalhostZooKeeperCluster cluster = standardZoo( LocalhostZooKeeperCluster.class );
         try
         {
             System.out.println( "press return to exit" );

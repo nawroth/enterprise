@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -29,8 +29,8 @@ import javax.management.NotCompliantMBeanException;
 import javax.management.remote.JMXServiceURL;
 
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.SlaveContext.Tx;
 import org.neo4j.helpers.Format;
-import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Service;
 import org.neo4j.jmx.impl.ManagementBeanProvider;
 import org.neo4j.jmx.impl.ManagementData;
@@ -149,9 +149,9 @@ public final class HighAvailabilityBean extends ManagementBeanProvider
             for ( SlaveContext context : contexts )
             {
                 Map<String, Long> lastTransactions = new HashMap<String, Long>();
-                for ( Pair<String, Long> tx : context.lastAppliedTransactions() )
+                for ( Tx tx : context.lastAppliedTransactions() )
                 {
-                    lastTransactions.put( tx.first(), tx.other() );
+                    lastTransactions.put( tx.getDataSourceName(), tx.getTxId() );
                 }
                 txInfo.add( new SlaveTransaction( context.getEventIdentifier(), lastTransactions ) );
             }

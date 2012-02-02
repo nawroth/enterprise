@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -35,7 +35,8 @@ public class MadeUpServerProcess extends SubProcess<ServerInterface, StartupData
     {
         MadeUpCommunicationInterface implementation = new MadeUpImplementation(
                 new StoreId( data.creationTime, data.storeId, data.storeVersion ) );
-        server = new MadeUpServer( implementation, 8888, data.internalProtocolVersion, data.applicationProtocolVersion );
+        server = new MadeUpServer( implementation, 8888, data.internalProtocolVersion, data.applicationProtocolVersion,
+                TxChecksumVerifier.ALWAYS_MATCH );
     }
 
     @Override

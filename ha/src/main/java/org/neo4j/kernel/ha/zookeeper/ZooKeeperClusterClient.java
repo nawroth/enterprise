@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -30,36 +30,54 @@ import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooKeeper;
 import org.neo4j.com.Client;
+import org.neo4j.helpers.Pair;
+import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.ha.ClusterClient;
+import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
-public class ClusterManager extends AbstractZooKeeperManager
+public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements ClusterClient
 {
     private final ZooKeeper zooKeeper;
     private String rootPath;
     private KeeperState state = KeeperState.Disconnected;
     private final String clusterName;
-    
-    public ClusterManager( String zooKeeperServers )
+
+    public ZooKeeperClusterClient( String zooKeeperServers )
     {
-        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME );
+        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME, null );
     }
-    
-    public ClusterManager( String zooKeeperServers, String clusterName )
+
+    public ZooKeeperClusterClient( String zooKeeperServers,
+            AbstractGraphDatabase db )
     {
-        super( zooKeeperServers, null, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME, db );
+    }
+
+    public ZooKeeperClusterClient( String zooKeeperServers, String clusterName )
+    {
+        this( zooKeeperServers, clusterName, null );
+    }
+
+    public ZooKeeperClusterClient( String zooKeeperServers, String clusterName,
+            AbstractGraphDatabase db )
+    {
+        super( zooKeeperServers, db,
+                Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                 Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                 Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT );
         this.clusterName = clusterName;
         this.zooKeeper = instantiateZooKeeper();
     }
-    
+
     @Override
     protected int getMyMachineId()
     {
         throw new UnsupportedOperationException( "Not implemented ClusterManager.getMyMachineId()" );
     }
-    
+
+    @Override
     public void waitForSyncConnected()
     {
         long startTime = System.currentTimeMillis();
@@ -80,7 +98,7 @@ public class ClusterManager extends AbstractZooKeeperManager
             }
         }
     }
-    
+
     public int getBackupPort( int machineId )
     {
         int port = readHaServer( machineId, true ).other();
@@ -96,12 +114,27 @@ public class ClusterManager extends AbstractZooKeeperManager
             state = event.getState();
         }
     }
-    
+
     public Machine getMaster()
     {
+        if ( readRootPath() == null )
+        {
+            return null;
+        }
         return getMasterBasedOn( getAllMachines( true ).values() );
     }
-    
+
+    public Pair<Master, Machine> getMasterClient()
+    {
+        Machine masterMachine = getMaster();
+        if ( masterMachine == null )
+        {
+            return null;
+        }
+        Master masterClient = getMasterClientToMachine( masterMachine );
+        return Pair.of( masterClient, masterMachine );
+    }
+
     @Override
     public String getRoot()
     {
@@ -111,20 +144,22 @@ public class ClusterManager extends AbstractZooKeeperManager
         }
         return rootPath;
     }
-    
+
     private String readRootPath()
     {
         waitForSyncConnected();
         StoreId storeId = getClusterStoreId( zooKeeper, clusterName );
-        if ( storeId == null ) throw new RuntimeException( "Cluster '" + clusterName + "' not found" );
+        if ( storeId == null ) return null;// throw new RuntimeException(
+                                           // "Cluster '" + clusterName +
+                                           // "' not found" );
         return asRootPath( storeId );
     }
-    
+
     public static String asRootPath( StoreId storeId )
     {
         return "/" + storeId.getCreationTime() + "_" + storeId.getRandomId();
     }
-    
+
     public static StoreId getClusterStoreId( ZooKeeper keeper, String clusterName )
     {
         try
@@ -159,20 +194,20 @@ public class ClusterManager extends AbstractZooKeeperManager
 //        infos.removeAll( getAllMachines().values() );
 //        return infos.toArray( new Machine[infos.size()] );
 //    }
-    
+
     /**
      * Returns the connected slaves in this cluster.
      * @return the connected slaves in this cluster.
      */
     public Machine[] getConnectedSlaves()
     {
-        Map<Integer, Machine> machines = getAllMachines( true );
+        Map<Integer, ZooKeeperMachine> machines = getAllMachines( true );
         Machine master = getMasterBasedOn( machines.values() );
         Collection<Machine> result = new ArrayList<Machine>( machines.values() );
         result.remove( master );
         return result.toArray( new Machine[result.size()] );
     }
-    
+
     @Override
     public ZooKeeper getZooKeeper( boolean sync )
     {

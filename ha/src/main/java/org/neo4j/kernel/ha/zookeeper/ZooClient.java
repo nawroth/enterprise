@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,7 +19,7 @@
  */
 package org.neo4j.kernel.ha.zookeeper;
 
-import static org.neo4j.kernel.ha.zookeeper.ClusterManager.asRootPath;
+import static org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient.asRootPath;
 
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
@@ -39,6 +39,7 @@ import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
+import org.neo4j.com.Client.ConnectionLostHandler;
 import org.neo4j.com.ComException;
 import org.neo4j.helpers.Exceptions;
 import org.neo4j.helpers.Pair;
@@ -109,6 +110,12 @@ public class ZooClient extends AbstractZooKeeperManager
         return this.machineId;
     }
 
+    @Override
+    protected ConnectionLostHandler getConnectionLostHandler()
+    {
+        return receiver;
+    }
+
     public void process( WatchedEvent event )
     {
         try
@@ -123,7 +130,8 @@ public class ZooClient extends AbstractZooKeeperManager
             else if ( path == null && event.getState() == Watcher.Event.KeeperState.SyncConnected )
             {
                 long newSessionId = zooKeeper.getSessionId();
-                Pair<Master, Machine> masterBeforeIWrite = getMasterFromZooKeeper( false, false );
+                Pair<Master, Machine> masterBeforeIWrite = getMasterFromZooKeeper(
+                        false, false );
                 msgLog.logMessage( "Get master before write:" + masterBeforeIWrite );
                 boolean masterBeforeIWriteDiffers = masterBeforeIWrite.other().getMachineId() != getCachedMaster().other().getMachineId();
                 if ( newSessionId != sessionId || masterBeforeIWriteDiffers )
@@ -132,7 +140,8 @@ public class ZooClient extends AbstractZooKeeperManager
                     {
                         sequenceNr = setup();
                         msgLog.logMessage( "Did setup, seq=" + sequenceNr + " new sessionId=" + newSessionId );
-                        Pair<Master, Machine> masterAfterIWrote = getMasterFromZooKeeper( false, false );
+                        Pair<Master, Machine> masterAfterIWrote = getMasterFromZooKeeper(
+                                false, false );
                         msgLog.logMessage( "Get master after write:" + masterAfterIWrote );
                         if ( sessionId != -1 )
                         {
@@ -157,6 +166,16 @@ public class ZooClient extends AbstractZooKeeperManager
             else if ( path == null && event.getState() == Watcher.Event.KeeperState.Disconnected )
             {
                 keeperState = KeeperState.Disconnected;
+            }
+            else if ( event.getType() == Watcher.Event.EventType.NodeDeleted )
+            {
+                msgLog.logMessage( "Got a NodeDeleted event for " + path );
+                ZooKeeperMachine currentMaster = (ZooKeeperMachine) getCachedMaster().other();
+                if ( path.contains( currentMaster.getZooKeeperPath() ) )
+                {
+                    msgLog.logMessage("Acting on it, calling newMaster()");
+                    receiver.newMaster( new Exception() );
+                }
             }
             else if ( event.getType() == Watcher.Event.EventType.NodeDataChanged )
             {
@@ -405,7 +424,7 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         if ( rootPath == null )
         {
-            storeId = ClusterManager.getClusterStoreId( zooKeeper, clusterName );
+            storeId = ZooKeeperClusterClient.getClusterStoreId( zooKeeper, clusterName );
             if ( storeId != null )
             {   // There's a cluster in place, let's use that
                 rootPath = asRootPath( storeId );
@@ -707,7 +726,8 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         try
         {
-            return getGraphDb().getConfig().getTxModule().getXaDataSourceManager().getXaDataSource( Config.DEFAULT_DATA_SOURCE_NAME ).getMasterForCommittedTx( tx ).first();
+            return getGraphDb().getConfig().getTxModule().getXaDataSourceManager().getXaDataSource(
+                    Config.DEFAULT_DATA_SOURCE_NAME ).getMasterForCommittedTx( tx ).first();
         }
         catch ( IOException e )
         {
@@ -770,9 +790,17 @@ public class ZooClient extends AbstractZooKeeperManager
             throw new ZooKeeperException( "createCluster interrupted", e );
         }
     }
-    
+
     public StoreId getClusterStoreId()
     {
         return storeId;
+    }
+    
+    @Override
+    public String toString()
+    {
+        return getClass().getSimpleName() + "[serverId:" + machineId + ", seq:" + sequenceNr +
+                ", lastCommittedTx:" + committedTx + " w/ master:" + masterForCommittedTx +
+                ", session:" + sessionId + "]";
     }
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,6 +19,16 @@
  */
 package org.neo4j.kernel.ha.zookeeper;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketAddress;
+import java.util.Map;
+
+import javax.management.remote.JMXServiceURL;
+
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HaConfig;
@@ -33,22 +43,14 @@ import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.management.Neo4jManager;
 
-import javax.management.remote.JMXServiceURL;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.util.Map;
-
 public class ZooKeeperBroker extends AbstractBroker
 {
-    private final ZooClient zooClient;
+    private volatile ZooClient zooClient;
     private final String haServer;
     private int clientLockReadTimeout;
-    private Map<String, String> config;
+    private final Map<String, String> config;
     private int fetchInfoTimeout;
+    private final ResponseReceiver receiver;
 
     public ZooKeeperBroker( AbstractGraphDatabase graphDb, Map<String, String> config, ResponseReceiver receiver )
     {
@@ -57,7 +59,13 @@ public class ZooKeeperBroker extends AbstractBroker
         haServer = HaConfig.getHaServerFromConfig( config );
         clientLockReadTimeout = HaConfig.getClientLockReadTimeoutFromConfig( config );
         fetchInfoTimeout = HaConfig.getFetchInfoTimeoutFromConfig( config );
-        zooClient = new ZooClient( graphDb, config, receiver );
+        this.receiver = receiver;
+        startZooClient();
+    }
+
+    private void startZooClient()
+    {
+        this.zooClient = new ZooClient( getGraphDb(), config, receiver );
     }
 
     @Override
@@ -157,7 +165,7 @@ public class ZooKeeperBroker extends AbstractBroker
     @Override
     public ConnectionInformation[] getConnectionInformation()
     {
-        Map<Integer, Machine> machines = zooClient.getAllMachines( false );
+        Map<Integer, ZooKeeperMachine> machines = zooClient.getAllMachines( false );
         Machine master = zooClient.getMasterBasedOn( machines.values() );
         ConnectionInformation[] result = new ConnectionInformation[machines.size()];
         int i = 0;
@@ -187,7 +195,7 @@ public class ZooKeeperBroker extends AbstractBroker
     @Override
     public Machine getMasterExceptMyself()
     {
-        Map<Integer, Machine> machines = zooClient.getAllMachines( true );
+        Map<Integer, ZooKeeperMachine> machines = zooClient.getAllMachines( true );
         machines.remove( getMyMachineId() );
         return zooClient.getMasterBasedOn( machines.values() );
     }
@@ -196,7 +204,8 @@ public class ZooKeeperBroker extends AbstractBroker
     {
         MasterServer server = new MasterServer( new MasterImpl( graphDb, config ),
                 Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog(),
-                clientLockReadTimeout );
+                HaConfig.getMaxConcurrentTransactionsOnMasterFromConfig( config ), clientLockReadTimeout,
+                new BranchDetectingTxVerifier( graphDb ) );
         return server;
     }
 
@@ -215,6 +224,13 @@ public class ZooKeeperBroker extends AbstractBroker
     public void shutdown()
     {
         zooClient.shutdown();
+    }
+
+    @Override
+    public void restart()
+    {
+        shutdown();
+        startZooClient();
     }
 
     @Override

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -20,32 +20,34 @@
 package org.neo4j.backup;
 
 import java.io.File;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
 import org.neo4j.backup.check.ConsistencyCheck;
+import org.neo4j.com.Client;
 import org.neo4j.com.MasterUtil;
 import org.neo4j.com.MasterUtil.TxHandler;
-import org.neo4j.com.Client;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.SlaveContext.Tx;
 import org.neo4j.com.ToFileStoreWriter;
 import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.helpers.Pair;
-import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
+import org.neo4j.kernel.ConfigParam;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreAccess;
 import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
-import org.neo4j.kernel.impl.transaction.xaframework.TransactionInterceptorProvider;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 import org.neo4j.kernel.impl.util.StringLogger;
+
+import static org.neo4j.com.SlaveContext.lastAppliedTx;
 
 public class OnlineBackup
 {
@@ -82,9 +84,11 @@ public class OnlineBackup
         }
 
         BackupClient client = new BackupClient( hostNameOrIp, port, StringLogger.DEV_NULL, Client.NO_STORE_ID_GETTER );
+        long timestamp = System.currentTimeMillis();
         try
         {
-            Response<Void> response = client.fullBackup( new ToFileStoreWriter( targetDirectory ) );
+            Response<Void> response = client.fullBackup( new ToFileStoreWriter(
+                    targetDirectory ) );
             GraphDatabaseService targetDb = startTemporaryDb( targetDirectory,
                     VerificationLevel.NONE /* run full check instead */ );
             try
@@ -95,6 +99,7 @@ public class OnlineBackup
             {
                 targetDb.shutdown();
             }
+            bumpLogFile( targetDirectory, timestamp );
             if ( verification )
             {
                 StoreAccess newStore = new StoreAccess( targetDirectory );
@@ -135,13 +140,13 @@ public class OnlineBackup
         return Collections.unmodifiableMap( lastCommittedTxs );
     }
 
-    static EmbeddedGraphDatabase startTemporaryDb( String targetDirectory, VerificationLevel verification )
+    static EmbeddedGraphDatabase startTemporaryDb( String targetDirectory, ConfigParam... params )
     {
-        if ( verification != VerificationLevel.NONE ) {
-            return new EmbeddedGraphDatabase( targetDirectory, MapUtil.stringMap(
-                            Config.INTERCEPT_DESERIALIZED_TRANSACTIONS, "true",
-                            TransactionInterceptorProvider.class.getSimpleName()
-                            +"."+verification.interceptorName, verification.configValue ) );
+        if (params != null && params.length > 0) {
+            Map<String,String> config = new HashMap<String, String>();
+            for ( ConfigParam param : params )
+                if ( param != null ) param.configure( config );
+            return new EmbeddedGraphDatabase( targetDirectory, config );
         }
         else
             return new EmbeddedGraphDatabase( targetDirectory );
@@ -160,14 +165,27 @@ public class OnlineBackup
         }
         GraphDatabaseService targetDb = startTemporaryDb( targetDirectory, VerificationLevel.valueOf( verification ) );
 
+        long backupStartTime = System.currentTimeMillis();
+        OnlineBackup result = null;
         try
         {
-            return incremental( targetDb );
+            result = incremental( targetDb );
         }
         finally
         {
             targetDb.shutdown();
         }
+
+        /*
+         * If result is not null, incremental backup was successful. It is a nice
+         * idea to bump up the messages.log timestamp to reflect the latest backup
+         * happened time.
+         */
+        if (result != null)
+        {
+            bumpLogFile( targetDirectory, backupStartTime );
+        }
+        return result;
     }
 
     public OnlineBackup incremental( GraphDatabaseService targetDb )
@@ -206,16 +224,46 @@ public class OnlineBackup
         }
     }
 
-    @SuppressWarnings( "unchecked" )
     private SlaveContext slaveContextOf( GraphDatabaseService graphDb )
     {
         XaDataSourceManager dsManager =
                 ((AbstractGraphDatabase) graphDb).getConfig().getTxModule().getXaDataSourceManager();
-        List<Pair<String, Long>> txs = new ArrayList<Pair<String,Long>>();
+        List<Tx> txs = new ArrayList<Tx>();
         for ( XaDataSource ds : dsManager.getAllRegisteredDataSources() )
         {
-            txs.add( Pair.of( ds.getName(), ds.getLastCommittedTxId() ) );
+            txs.add( lastAppliedTx( ds.getName(), ds.getLastCommittedTxId() ) );
         }
-        return SlaveContext.anonymous( txs.toArray( new Pair[0] ) );
+        return SlaveContext.anonymous( txs.toArray( new Tx[0] ) );
+    }
+
+    private static boolean bumpLogFile( String targetDirectory, long toTimestamp )
+    {
+        File dbDirectory = new File( targetDirectory );
+        File[] candidates = dbDirectory.listFiles( new FilenameFilter()
+        {
+            @Override
+            public boolean accept( File dir, String name )
+            {
+                /*
+                 *  Contains ensures that previously timestamped files are
+                 *  picked up as well
+                 */
+                return name.equals( StringLogger.DEFAULT_NAME );
+            }
+        } );
+        File previous = null;
+        if ( candidates.length != 1 )
+        {
+            return false;
+        }
+        // candidates has a unique member, the right one
+        else
+        {
+            previous = candidates[0];
+        }
+        // Build to, from existing parent + new filename
+        File to = new File( previous.getParentFile(), StringLogger.DEFAULT_NAME
+                                                      + "." + toTimestamp );
+        return previous.renameTo( to );
     }
 }

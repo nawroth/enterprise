@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,23 +19,7 @@
  */
 package org.neo4j.test.ha;
 
-import org.junit.Ignore;
-import org.neo4j.com.Client;
-import org.neo4j.com.Protocol;
-import org.neo4j.helpers.Format;
-import org.neo4j.kernel.HAGraphDb;
-import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.HighlyAvailableGraphDatabase;
-import org.neo4j.kernel.ha.Broker;
-import org.neo4j.kernel.ha.FakeMasterBroker;
-import org.neo4j.kernel.ha.FakeSlaveBroker;
-import org.neo4j.kernel.ha.MasterClient;
-import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
-import org.neo4j.management.HighAvailability;
-import org.neo4j.test.subprocess.SubProcess;
-import slavetest.AbstractHaTest;
-import slavetest.Job;
-import slavetest.PlaceHolderGraphDatabaseService;
+import static java.util.Arrays.asList;
 
 import java.io.File;
 import java.io.PrintStream;
@@ -46,7 +30,25 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static java.util.Arrays.asList;
+import org.junit.Ignore;
+import org.neo4j.com.Client;
+import org.neo4j.com.Protocol;
+import org.neo4j.helpers.Format;
+import org.neo4j.kernel.HAGraphDb;
+import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.HighlyAvailableGraphDatabase;
+import org.neo4j.kernel.ha.Broker;
+import org.neo4j.kernel.ha.FakeClusterClient;
+import org.neo4j.kernel.ha.FakeMasterBroker;
+import org.neo4j.kernel.ha.FakeSlaveBroker;
+import org.neo4j.kernel.ha.MasterClient;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
+import org.neo4j.management.HighAvailability;
+import org.neo4j.test.subprocess.SubProcess;
+
+import slavetest.AbstractHaTest;
+import slavetest.Job;
+import slavetest.PlaceHolderGraphDatabaseService;
 
 @Ignore
 public class StandaloneDatabase
@@ -117,14 +119,19 @@ public class StandaloneDatabase
                 else
                 {
                     broker = new FakeSlaveBroker( new MasterClient( "localhost",
-                            Protocol.PORT, placeHolderGraphDb, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+                                            Protocol.PORT,
+                                            placeHolderGraphDb,
+                                            null,
+                                            Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                             Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                             Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ),
                             masterId, machineId, placeHolderGraphDb );
                 }
                 config = removeDashes( config );
                 HighlyAvailableGraphDatabase db = new HighlyAvailableGraphDatabase( new HAGraphDb( storeDir, config,
-                        AbstractHaTest.wrapBrokerAndSetPlaceHolderDb( placeHolderGraphDb, broker ) ) );
+                                        AbstractHaTest.wrapBrokerAndSetPlaceHolderDb(
+                                                placeHolderGraphDb, broker ),
+                                        new FakeClusterClient( broker ) ) );
                 placeHolderGraphDb.setDb( db );
                 System.out.println( "Started HA db (w/o zoo keeper)" );
                 return db;

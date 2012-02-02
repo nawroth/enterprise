@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -24,11 +24,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.neo4j.kernel.impl.nioneo.store.CommonAbstractStore.ALL_STORES_VERSION;
+import static org.neo4j.kernel.impl.nioneo.store.NeoStore.versionStringToLong;
 
 import java.io.File;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.neo4j.kernel.impl.nioneo.store.CommonAbstractStore;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
@@ -54,7 +55,7 @@ public class TestCommunication
     public void clientGetResponseFromServerViaComLayer() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+        MadeUpServer server = madeUpServer( serverImplementation );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         int value1 = 10;
@@ -66,6 +67,17 @@ public class TestCommunication
         assertTrue( server.responseHasBeenWritten() );
         client.shutdown();
         server.shutdown();
+    }
+
+    private MadeUpServer madeUpServer( MadeUpImplementation serverImplementation )
+    {
+        return madeUpServer( serverImplementation, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+    }
+    
+    private MadeUpServer madeUpServer( MadeUpImplementation serverImplementation, byte internalVersion, byte applicationVersion )
+    {
+        return new MadeUpServer( serverImplementation, PORT, internalVersion, applicationVersion,
+                TxChecksumVerifier.ALWAYS_MATCH );
     }
 
     private void waitUntilResponseHasBeenWritten( MadeUpServer server, int maxTime ) throws Exception
@@ -81,13 +93,9 @@ public class TestCommunication
     public void makeSureClientStoreIdsMustMatch() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
-        MadeUpClient client = new MadeUpClient(
-                PORT,
-                new StoreId(
-                        10,
-                        10,
-                        NeoStore.versionStringToLong( CommonAbstractStore.ALL_STORES_VERSION ) ),
+        MadeUpServer server = madeUpServer( serverImplementation );
+        MadeUpClient client = new MadeUpClient( PORT,
+                new StoreId( 10, 10, NeoStore.versionStringToLong( CommonAbstractStore.ALL_STORES_VERSION ) ),
                 INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         try
@@ -110,11 +118,8 @@ public class TestCommunication
     public void makeSureServerStoreIdsMustMatch() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation(
-                new StoreId(
-                        10,
-                        10,
-                        NeoStore.versionStringToLong( CommonAbstractStore.ALL_STORES_VERSION ) ) );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+                new StoreId( 10, 10, versionStringToLong( ALL_STORES_VERSION ) ) );
+        MadeUpServer server = madeUpServer( serverImplementation );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         try
@@ -137,7 +142,7 @@ public class TestCommunication
     public void makeSureClientCanStreamBigData() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+        MadeUpServer server = madeUpServer( serverImplementation );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         client.streamSomeData( new ToAssertionWriter(), MadeUpServer.FRAME_LENGTH*3 );
@@ -159,7 +164,7 @@ public class TestCommunication
                 return new Response<Void>( null, storeIdToUse, TransactionStream.EMPTY );
             }
         };
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+        MadeUpServer server = madeUpServer( serverImplementation );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         try
@@ -167,9 +172,9 @@ public class TestCommunication
             client.streamSomeData( new ToAssertionWriter(), MadeUpServer.FRAME_LENGTH*2 );
             fail( "Should have thrown " + MadeUpException.class.getSimpleName() );
         }
-        catch ( ComException e )
+        catch ( MadeUpException e )
         {
-            assertCause( e, MadeUpException.class, failureMessage );
+            assertEquals( failureMessage, e.getMessage() );
         }
 
         client.shutdown();
@@ -197,7 +202,7 @@ public class TestCommunication
     public void throwingServerSideExceptionBackToClient() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+        MadeUpServer server = madeUpServer( serverImplementation );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         String exceptionMessage = "The message";
@@ -206,9 +211,9 @@ public class TestCommunication
             client.throwException( exceptionMessage );
             fail( "Should have thrown " + MadeUpException.class.getSimpleName() );
         }
-        catch ( ComException e )
-        {
-            assertCause( e, MadeUpException.class, exceptionMessage );
+        catch ( MadeUpException e )
+        {   // Good
+            assertEquals( exceptionMessage, e.getMessage() );
         }
 
         client.shutdown();
@@ -219,7 +224,7 @@ public class TestCommunication
     public void applicationProtocolVersionsMustMatch() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, (byte) (APPLICATION_PROTOCOL_VERSION+1) );
+        MadeUpServer server = madeUpServer( serverImplementation, INTERNAL_PROTOCOL_VERSION, (byte) (APPLICATION_PROTOCOL_VERSION+1) );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         try
@@ -259,7 +264,7 @@ public class TestCommunication
     public void internalProtocolVersionsMustMatch() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, (byte)1, APPLICATION_PROTOCOL_VERSION );
+        MadeUpServer server = madeUpServer( serverImplementation, (byte)1, APPLICATION_PROTOCOL_VERSION );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, (byte)2, APPLICATION_PROTOCOL_VERSION );
 
         try
@@ -294,12 +299,11 @@ public class TestCommunication
         server.shutdown();
     }
 
-    @Ignore( "This triggers client.shutdown() deadlock" )
     @Test
     public void serverStopsStreamingToDeadClient() throws Exception
     {
         MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
-        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+        MadeUpServer server = madeUpServer( serverImplementation );
         MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
 
         int failAtSize = MadeUpServer.FRAME_LENGTH*2;
@@ -309,7 +313,7 @@ public class TestCommunication
             client.streamSomeData( writer, MadeUpServer.FRAME_LENGTH*10 );
             fail( "Should fail in the middle" );
         }
-        catch ( Exception e )
+        catch ( ComException e )
         {   // Expected
         }
         assertTrue( writer.getSizeRead() >= failAtSize );
@@ -319,6 +323,33 @@ public class TestCommunication
         assertTrue( "Failure writing the response should have been encountered", server.responseFailureEncountered() );
         assertFalse( "Response shouldn't have been successful", server.responseHasBeenWritten() );
 
+        server.shutdown();
+    }
+    
+    @Test
+    public void serverContextVerificationCanThrowException() throws Exception
+    {
+        final String failureMessage = "I'm failing";
+        MadeUpImplementation serverImplementation = new MadeUpImplementation( storeIdToUse );
+        TxChecksumVerifier failingVerifier = new TxChecksumVerifier()
+        {
+            @Override
+            public void assertMatch( long txId, int masterId, long checksum )
+            {
+                throw new FailingException( failureMessage );
+            }
+        };
+        MadeUpServer server = new MadeUpServer( serverImplementation, PORT, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION, failingVerifier );
+        MadeUpClient client = new MadeUpClient( PORT, storeIdToUse, INTERNAL_PROTOCOL_VERSION, APPLICATION_PROTOCOL_VERSION );
+
+        try
+        {
+            client.multiply( 10, 5 );
+        }
+        catch ( FailingException e )
+        {   // Good
+        }
+        
         server.shutdown();
     }
     

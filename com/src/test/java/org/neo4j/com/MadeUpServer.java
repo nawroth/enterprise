@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -30,10 +30,11 @@ public class MadeUpServer extends Server<MadeUpCommunicationInterface, Void>
     private final byte internalProtocolVersion;
     public static final int FRAME_LENGTH = 10000;
 
-    public MadeUpServer( MadeUpCommunicationInterface realMaster, int port, byte internalProtocolVersion, byte applicationProtocolVersion )
+    public MadeUpServer( MadeUpCommunicationInterface realMaster, int port, byte internalProtocolVersion,
+            byte applicationProtocolVersion, TxChecksumVerifier txVerifier )
     {
         super( realMaster, port, StringLogger.DEV_NULL, FRAME_LENGTH, applicationProtocolVersion,
-                DEFAULT_MAX_NUMBER_OF_CONCURRENT_TRANSACTIONS, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS );
+                DEFAULT_MAX_NUMBER_OF_CONCURRENT_TRANSACTIONS, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS, txVerifier );
         this.internalProtocolVersion = internalProtocolVersion;
     }
 

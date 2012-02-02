@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -18,6 +18,9 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 package org.neo4j.backup.log;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import org.neo4j.helpers.Service;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
@@ -51,23 +54,37 @@ public class InconsistencyLoggingTransactionInterceptorProvider extends
             return null;
         }
         VerifyingTransactionInterceptor.CheckerMode mode;
+        String[] config = ((String) options).split( ";" );
         try
         {
-            mode = VerifyingTransactionInterceptor.CheckerMode.valueOf( ( (String) options ).toUpperCase() );
+            mode = VerifyingTransactionInterceptor.CheckerMode.valueOf( config[0].toUpperCase() );
         }
         catch ( Exception ex )
         {
             return null;
         }
-        return new VerifyingTransactionInterceptor( (NeoStoreXaDataSource) ds, mode, false );
+        Map<String, String> extra = new HashMap<String, String>();
+        for ( int i = 1; i < config.length; i++ )
+        {
+            String[] parts = config[i].split( "=", 2 );
+            extra.put( parts[0].toLowerCase(), parts.length == 1 ? "true" : parts[1] );
+        }
+        return new VerifyingTransactionInterceptor( (NeoStoreXaDataSource) ds, mode, false, extra );
     }
 
     @Override
-    public VerifyingTransactionInterceptor create( TransactionInterceptor next,
+    public TransactionInterceptor create( TransactionInterceptor next,
             XaDataSource ds, Object options )
     {
         VerifyingTransactionInterceptor result = create( ds, options );
-        result.setNext( next );
-        return result;
+        if ( result != null )
+        {
+            result.setNext( next );
+            return result;
+        }
+        else
+        {
+            return next;
+        }
     }
 }
