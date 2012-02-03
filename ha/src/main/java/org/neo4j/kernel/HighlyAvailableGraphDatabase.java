@@ -897,18 +897,7 @@ public class HighlyAvailableGraphDatabase
         {
             if ( rotateLogs )
             {
-                // TODO This should be in XaDataSourceManager most likely
-                for ( XaDataSource dataSource : internalGraphDatabase.getXaDataSourceManager().getAllRegisteredDataSources() )
-                {
-                    try
-                    {
-                        dataSource.rotateLogicalLog();
-                    }
-                    catch ( IOException e )
-                    {
-                        messageLog.logMessage( "Couldn't rotate logical log for " + dataSource.getName(), e );
-                    }
-                }
+                internalGraphDatabase.getXaDataSourceManager().rotateLogicalLogs();
             }
             messageLog.logMessage( "Internal shutdown localGraph", true );
             this.internalGraphDatabase.shutdown();

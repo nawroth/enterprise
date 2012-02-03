@@ -216,9 +216,9 @@ public class OnlineBackup
         }
     }
 
-    private void getLastCommittedTxs( GraphDatabaseService graphDb )
+    private void getLastCommittedTxs( GraphDatabaseSPI graphDb )
     {
-        for ( XaDataSource ds : ((AbstractGraphDatabase) graphDb).getXaDataSourceManager().getAllRegisteredDataSources() )
+        for ( XaDataSource ds : graphDb.getXaDataSourceManager().getAllRegisteredDataSources() )
         {
             lastCommittedTxs.put( ds.getName(), ds.getLastCommittedTxId() );
         }
