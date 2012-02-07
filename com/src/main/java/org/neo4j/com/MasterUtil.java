@@ -19,6 +19,8 @@
  */
 package org.neo4j.com;
 
+import static org.neo4j.com.SlaveContext.lastAppliedTx;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -33,9 +35,10 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
+import org.neo4j.com.SlaveContext.Tx;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.event.ErrorState;
 import org.neo4j.helpers.Exceptions;
-import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Predicate;
 import org.neo4j.helpers.Triplet;
 import org.neo4j.helpers.collection.ClosableIterable;
@@ -89,27 +92,27 @@ public class MasterUtil
         return path;
     }
 
-    public static Pair<String, Long>[] rotateLogs( GraphDatabaseService graphDb )
+    public static Tx[] rotateLogs( GraphDatabaseService graphDb )
     {
         XaDataSourceManager dsManager =
                 ((AbstractGraphDatabase) graphDb).getConfig().getTxModule().getXaDataSourceManager();
         Collection<XaDataSource> sources = dsManager.getAllRegisteredDataSources();
 
-        @SuppressWarnings( "unchecked" )
-        Pair<String, Long>[] appliedTransactions = new Pair[sources.size()];
+        Tx[] appliedTransactions = new Tx[sources.size()];
         int i = 0;
         for ( XaDataSource ds : sources )
         {
             try
             {
-                long lastCommittedTx = ds.getXaContainer().getResourceManager().rotateLogicalLog();
-                appliedTransactions[i++] = Pair.of( ds.getName(), lastCommittedTx );
+                appliedTransactions[i++] = lastAppliedTx( ds.getName(), ds.getXaContainer().getResourceManager().rotateLogicalLog() );
             }
-            catch ( IOException e )
-            {
-                // TODO: what about error message?
+            catch ( Throwable e )
+            {   // This must be treated as a kernel panic, failure to rotate is bad.
                 ((AbstractGraphDatabase)graphDb).getMessageLog().logMessage(
                         "Unable to rotate log for " + ds, e );
+                // TODO If we do it in rotate() the transaction semantics for such a failure will change
+                // slightly and that has got to be verified somehow. But to have it in there feels much better.
+                ((AbstractGraphDatabase)graphDb).getConfig().getKernelPanicGenerator().generateEvent( ErrorState.TX_MANAGER_NOT_OK );
                 throw new MasterFailureException( e );
             }
         }
@@ -258,7 +261,7 @@ public class MasterUtil
              * If there's an error in here then close the log extractors,
              * otherwise if we're successful the TransactionStream will close it.
              */
-            logExtractor.close();
+            if ( logExtractor != null ) logExtractor.close();
             throw Exceptions.launderedException( t );
         }
     }
@@ -286,9 +289,9 @@ public class MasterUtil
         final List<LogExtractor> logExtractors = new ArrayList<LogExtractor>();
         try
         {
-            for ( Pair<String, Long> txEntry : context.lastAppliedTransactions() )
+            for ( Tx txEntry : context.lastAppliedTransactions() )
             {
-                String resourceName = txEntry.first();
+                String resourceName = txEntry.getDataSourceName();
                 final XaDataSource dataSource = dsManager.getXaDataSource( resourceName );
                 if ( dataSource == null )
                 {
@@ -296,9 +299,9 @@ public class MasterUtil
                 }
                 resourceNames.add( resourceName );
                 final long masterLastTx = dataSource.getLastCommittedTxId();
-                if ( txEntry.other() >= masterLastTx ) continue;
+                if ( txEntry.getTxId() >= masterLastTx ) continue;
                 LogExtractor logExtractor = getTransactionStreamForDatasource(
-                        dataSource, txEntry.other() + 1, masterLastTx, stream,
+                        dataSource, txEntry.getTxId() + 1, masterLastTx, stream,
                         filter );
                 logExtractors.add( logExtractor );
             }
