@@ -254,8 +254,18 @@ public class HAGraphDb extends AbstractGraphDatabase
 
     private void moveCopiedStoreIntoWorkingDir()
     {
-        FileUtils.moveFiles( new File( getStoreDir(), TEMP_COPY ), new File(
-                getStoreDir() ) );
+        File storeDir = new File( getStoreDir() );
+        for ( File candidate : new File( storeDir, TEMP_COPY ).listFiles( new FileFilter()
+        {
+            @Override
+            public boolean accept( File file )
+            {
+                return !file.getName().equals( StringLogger.DEFAULT_NAME );
+            }
+        } ) )
+        {
+            FileUtils.moveFile( candidate, storeDir );
+        }
     }
 
     private String getClearedTempDir() throws Exception
@@ -451,11 +461,14 @@ public class HAGraphDb extends AbstractGraphDatabase
             throws Exception
     {
         getMessageLog().logMessage( "Copying store from master" );
+        String temp = getClearedTempDir();
         Response<Void> response = master.first().copyStore( emptyContext(),
-                new ToFileStoreWriter( getClearedTempDir() ) );
+                new ToFileStoreWriter( temp ) );
         long highestLogVersion = highestLogVersion();
-        if ( highestLogVersion > -1 ) NeoStore.setVersion( getStoreDir(), highestLogVersion + 1 );
-        EmbeddedGraphDatabase copiedDb = new EmbeddedGraphDatabase( getStoreDir(), stringMap( KEEP_LOGICAL_LOGS, "true" ) );
+        if ( highestLogVersion > -1 )
+            NeoStore.setVersion( temp, highestLogVersion + 1 );
+        EmbeddedGraphDatabase copiedDb = new EmbeddedGraphDatabase( temp,
+                stringMap( KEEP_LOGICAL_LOGS, "true" ) );
         try
         {
             MasterUtil.applyReceivedTransactions( response, copiedDb, MasterUtil.txHandlerForFullCopy() );
