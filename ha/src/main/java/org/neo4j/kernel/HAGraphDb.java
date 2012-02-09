@@ -93,6 +93,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 {
     private static final int STORE_COPY_RETRIES = 3;
     private static final int NEW_MASTER_STARTUP_RETRIES = 3;
+    private static final String TEMP_COPY = "temp-copy";
 
     private final Map<String, String> config;
     private final BrokerFactory brokerFactory;
@@ -215,17 +216,18 @@ public class HAGraphDb extends AbstractGraphDatabase
             Pair<Master, Machine> master = clusterClient.getMasterClient();
             // Assume it's shut down at this point
             internalShutdown( false );
+
             if ( branched )
             {
                 makeWayForNewDb();
             }
-
             Exception exception = null;
             for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
             {
                 try
                 {
                     copyStoreFromMaster( master );
+                    moveCopiedStoreIntoWorkingDir();
                     return;
                 }
                 // TODO Maybe catch IOException and treat it more seriously?
@@ -239,13 +241,29 @@ public class HAGraphDb extends AbstractGraphDatabase
                     BranchedDataPolicy.keep_none.handle( this );
                 }
             }
+            BranchedDataPolicy.keep_none.handle( this );
             throw new RuntimeException(
                     "Gave up trying to copy store from master", exception );
+
         }
         finally
         {
             broker.start();
         }
+    }
+
+    private void moveCopiedStoreIntoWorkingDir()
+    {
+        FileUtils.moveFiles( new File( getStoreDir(), TEMP_COPY ), new File(
+                getStoreDir() ) );
+    }
+
+    private String getClearedTempDir() throws Exception
+    {
+        File temp = new File( getStoreDir(), TEMP_COPY );
+        temp.mkdir();
+        FileUtils.deleteFiles( temp, ".*" );
+        return temp.getAbsolutePath();
     }
 
     void makeWayForNewDb()
@@ -434,7 +452,7 @@ public class HAGraphDb extends AbstractGraphDatabase
     {
         getMessageLog().logMessage( "Copying store from master" );
         Response<Void> response = master.first().copyStore( emptyContext(),
-                new ToFileStoreWriter( getStoreDir() ) );
+                new ToFileStoreWriter( getClearedTempDir() ) );
         long highestLogVersion = highestLogVersion();
         if ( highestLogVersion > -1 ) NeoStore.setVersion( getStoreDir(), highestLogVersion + 1 );
         EmbeddedGraphDatabase copiedDb = new EmbeddedGraphDatabase( getStoreDir(), stringMap( KEEP_LOGICAL_LOGS, "true" ) );
@@ -1278,6 +1296,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 
         E failure();
     }
+
 
     private class LocalGraphAvailableCondition implements Condition<EmbeddedGraphDbImpl, RuntimeException>
     {

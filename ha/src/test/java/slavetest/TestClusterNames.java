@@ -21,6 +21,7 @@ package slavetest;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.After;
 import org.junit.Before;
@@ -31,8 +32,8 @@ import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HAGraphDb;
 import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 import org.neo4j.kernel.ha.zookeeper.NeoStoreUtil;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.ha.LocalhostZooKeeperCluster;
@@ -108,6 +109,7 @@ public class TestClusterNames
         // Restart an instance and make sure it rejoins the correct cluster again
         db0Cluster1.shutdown();
         db1Cluster1.newMaster( new Exception() );
+        assertTrue( db1Cluster1.isMaster() );
         pullUpdates( db1Cluster1 );
         db0Cluster1 = db( 0, cluster1Name, HaConfig.CONFIG_DEFAULT_PORT );
         pullUpdates( db0Cluster1, db1Cluster1 );
