@@ -200,42 +200,52 @@ public class HAGraphDb extends AbstractGraphDatabase
 
     private void getFreshDatabaseFromMaster( boolean branched )
     {
-        /*
-         * Use the cluster client here instead of the broker provided master client.
-         * The problem is that clients from the broker are shutdown when zk hiccups
-         * so the channel is closed and the copy operation fails. Clients provided from
-         * the clusterClient do not suffer from that - after getting hold of such an
-         * object, even if the zk cluster goes down the operation will succeed, dependent
-         * only on the source machine being alive. If, in the meantime, the master changes
-         * then the verification after the new master election will call us again.
-         */
-        Pair<Master, Machine> master = clusterClient.getMasterClient();
-        // Assume it's shut down at this point
-        internalShutdown( false );
-        if ( branched )
+        broker.shutdown();
+        try
         {
-            makeWayForNewDb();
-        }
+            /*
+             * Use the cluster client here instead of the broker provided master client.
+             * The problem is that clients from the broker are shutdown when zk hiccups
+             * so the channel is closed and the copy operation fails. Clients provided from
+             * the clusterClient do not suffer from that - after getting hold of such an
+             * object, even if the zk cluster goes down the operation will succeed, dependent
+             * only on the source machine being alive. If, in the meantime, the master changes
+             * then the verification after the new master election will call us again.
+             */
+            Pair<Master, Machine> master = clusterClient.getMasterClient();
+            // Assume it's shut down at this point
+            internalShutdown( false );
+            if ( branched )
+            {
+                makeWayForNewDb();
+            }
 
-        Exception exception = null;
-        for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
-        {
-            try
+            Exception exception = null;
+            for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
             {
-                copyStoreFromMaster( master );
-                return;
+                try
+                {
+                    copyStoreFromMaster( master );
+                    return;
+                }
+                // TODO Maybe catch IOException and treat it more seriously?
+                catch ( Exception e )
+                {
+                    getMessageLog().logMessage(
+                            "Problems copying store from master", e );
+                    sleepWithoutInterruption( 1000, "" );
+                    exception = e;
+                    master = clusterClient.getMasterClient();
+                    BranchedDataPolicy.keep_none.handle( this );
+                }
             }
-            // TODO Maybe catch IOException and treat it more seriously?
-            catch ( Exception e )
-            {
-                getMessageLog().logMessage( "Problems copying store from master", e );
-                sleepWithoutInterruption( 1000, "" );
-                exception = e;
-                master = clusterClient.getMasterClient();
-                BranchedDataPolicy.keep_none.handle( this );
-            }
+            throw new RuntimeException(
+                    "Gave up trying to copy store from master", exception );
         }
-        throw new RuntimeException( "Gave up trying to copy store from master", exception );
+        finally
+        {
+            broker.start();
+        }
     }
 
     void makeWayForNewDb()
@@ -630,7 +640,7 @@ public class HAGraphDb extends AbstractGraphDatabase
      * doesn't keep a zoo client open - so is no reason to recreate it
      */
     @Override
-    public void reconnect( Exception e )
+    public synchronized void reconnect( Exception e )
     {
         if ( broker != null )
         {
