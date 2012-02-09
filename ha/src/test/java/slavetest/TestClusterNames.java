@@ -76,14 +76,14 @@ public class TestClusterNames
         // Here's one cluster
         String cluster1Name = "cluster_1";
         HAGraphDb db0Cluster1 = db( 0, cluster1Name, HaConfig.CONFIG_DEFAULT_PORT );
-        HAGraphDb db1Cluster1 = db( 1, cluster1Name, HaConfig.CONFIG_DEFAULT_PORT );
+        HAGraphDb db1Cluster1 = db( 1, cluster1Name, HaConfig.CONFIG_DEFAULT_PORT+1 );
         awaitStarted( db0Cluster1 );
         awaitStarted( db1Cluster1 );
 
         // Here's another cluster
         String cluster2Name = "cluster.2";
-        HAGraphDb db0Cluster2 = db( 0, cluster2Name, HaConfig.CONFIG_DEFAULT_PORT+1 );
-        HAGraphDb db1Cluster2 = db( 1, cluster2Name, HaConfig.CONFIG_DEFAULT_PORT+1 );
+        HAGraphDb db0Cluster2 = db( 0, cluster2Name, HaConfig.CONFIG_DEFAULT_PORT+2 );
+        HAGraphDb db1Cluster2 = db( 1, cluster2Name, HaConfig.CONFIG_DEFAULT_PORT+3 );
         awaitStarted( db0Cluster2 );
         awaitStarted( db1Cluster2 );
 
@@ -113,7 +113,7 @@ public class TestClusterNames
         pullUpdates( db0Cluster1, db1Cluster1 );
         db1Cluster2.shutdown();
         pullUpdates( db0Cluster2 );
-        db1Cluster2 = db( 1, cluster2Name, HaConfig.CONFIG_DEFAULT_PORT+1 );
+        db1Cluster2 = db( 1, cluster2Name, HaConfig.CONFIG_DEFAULT_PORT+3 );
         pullUpdates( db0Cluster2, db1Cluster2 );
 
         // Change property in the first cluster, make sure it only affects that cluster
