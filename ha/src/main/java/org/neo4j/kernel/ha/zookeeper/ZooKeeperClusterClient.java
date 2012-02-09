@@ -30,26 +30,47 @@ import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooKeeper;
 import org.neo4j.com.Client;
+import org.neo4j.helpers.Pair;
+import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.ha.ClusterClient;
+import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
-public class ClusterManager extends AbstractZooKeeperManager
+public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements ClusterClient
 {
     private final ZooKeeper zooKeeper;
     private String rootPath;
     private KeeperState state = KeeperState.Disconnected;
     private final String clusterName;
 
-    public ClusterManager( String zooKeeperServers )
+    public ZooKeeperClusterClient( String zooKeeperServers )
     {
-        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME );
+        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME, null,
+                HaConfig.CONFIG_DEFAULT_ZK_SESSION_TIMEOUT );
     }
 
-    public ClusterManager( String zooKeeperServers, String clusterName )
+    public ZooKeeperClusterClient( String zooKeeperServers,
+            AbstractGraphDatabase db )
     {
-        super( zooKeeperServers, null, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME, db,
+                HaConfig.CONFIG_DEFAULT_ZK_SESSION_TIMEOUT );
+    }
+
+    public ZooKeeperClusterClient( String zooKeeperServers, String clusterName )
+    {
+        this( zooKeeperServers, clusterName, null,
+                HaConfig.CONFIG_DEFAULT_ZK_SESSION_TIMEOUT );
+    }
+
+    public ZooKeeperClusterClient( String zooKeeperServers, String clusterName,
+            AbstractGraphDatabase db, long sessionTimeout )
+    {
+        super( zooKeeperServers, db,
                 Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
-                Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT );
+                Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+                Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT,
+                sessionTimeout );
         this.clusterName = clusterName;
         this.zooKeeper = instantiateZooKeeper();
     }
@@ -64,7 +85,7 @@ public class ClusterManager extends AbstractZooKeeperManager
     public void waitForSyncConnected()
     {
         long startTime = System.currentTimeMillis();
-        while ( System.currentTimeMillis()-startTime < SESSION_TIME_OUT )
+        while ( System.currentTimeMillis() - startTime < getSessionTimeout() )
         {
             if ( state == KeeperState.SyncConnected )
             {
@@ -100,7 +121,22 @@ public class ClusterManager extends AbstractZooKeeperManager
 
     public Machine getMaster()
     {
+        if ( readRootPath() == null )
+        {
+            return null;
+        }
         return getMasterBasedOn( getAllMachines( true ).values() );
+    }
+
+    public Pair<Master, Machine> getMasterClient()
+    {
+        Machine masterMachine = getMaster();
+        if ( masterMachine == null )
+        {
+            return null;
+        }
+        Master masterClient = getMasterClientToMachine( masterMachine );
+        return Pair.of( masterClient, masterMachine );
     }
 
     @Override
@@ -117,7 +153,9 @@ public class ClusterManager extends AbstractZooKeeperManager
     {
         waitForSyncConnected();
         StoreId storeId = getClusterStoreId( zooKeeper, clusterName );
-        if ( storeId == null ) throw new RuntimeException( "Cluster '" + clusterName + "' not found" );
+        if ( storeId == null ) return null;// throw new RuntimeException(
+                                           // "Cluster '" + clusterName +
+                                           // "' not found" );
         return asRootPath( storeId );
     }
 

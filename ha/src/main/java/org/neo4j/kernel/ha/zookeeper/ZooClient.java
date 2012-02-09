@@ -19,7 +19,7 @@
  */
 package org.neo4j.kernel.ha.zookeeper;
 
-import static org.neo4j.kernel.ha.zookeeper.ClusterManager.asRootPath;
+import static org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient.asRootPath;
 
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
@@ -85,11 +85,11 @@ public class ZooClient extends AbstractZooKeeperManager
 
     public ZooClient( AbstractGraphDatabase graphDb, Map<String, String> config, ResponseReceiver receiver )
     {
-        super( HaConfig.getCoordinatorsFromConfig( config ),
-            graphDb,
-            HaConfig.getClientReadTimeoutFromConfig( config ),
-            HaConfig.getClientLockReadTimeoutFromConfig( config ),
-            HaConfig.getMaxConcurrentChannelsPerSlaveFromConfig( config ) );
+        super( HaConfig.getCoordinatorsFromConfig( config ), graphDb,
+                HaConfig.getClientReadTimeoutFromConfig( config ),
+                HaConfig.getClientLockReadTimeoutFromConfig( config ),
+                HaConfig.getMaxConcurrentChannelsPerSlaveFromConfig( config ),
+                HaConfig.getZKSessionTimeoutFromConfig( config ) );
         this.receiver = receiver;
         machineId = HaConfig.getMachineIdFromConfig( config );
         backupPort = HaConfig.getBackupPortFromConfig( config );
@@ -116,10 +116,17 @@ public class ZooClient extends AbstractZooKeeperManager
 
     public void process( WatchedEvent event )
     {
+        String path = event.getPath();
+        msgLog.logMessage( this + ", " + new Date() + " Got event: " + event
+                           + " (path=" + path + ")", true );
+        if ( shutdown )
+        {
+            msgLog.logMessage( this
+                               + ", is shutdown, the above event is ignored" );
+            return;
+        }
         try
         {
-            String path = event.getPath();
-            msgLog.logMessage( this + ", " + new Date() + " Got event: " + event + " (path=" + path + ")", true );
             if ( path == null && event.getState() == Watcher.Event.KeeperState.Expired )
             {
                 keeperState = KeeperState.Expired;
@@ -257,7 +264,7 @@ public class ZooClient extends AbstractZooKeeperManager
                 }
                 currentTime = System.currentTimeMillis();
             }
-            while ( (currentTime - startTime) < SESSION_TIME_OUT );
+            while ( ( currentTime - startTime ) < getSessionTimeout() );
 
             if ( keeperState != KeeperState.SyncConnected )
             {
@@ -418,7 +425,7 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         if ( rootPath == null )
         {
-            storeId = ClusterManager.getClusterStoreId( zooKeeper, clusterName );
+            storeId = ZooKeeperClusterClient.getClusterStoreId( zooKeeper, clusterName );
             if ( storeId != null )
             {   // There's a cluster in place, let's use that
                 rootPath = asRootPath( storeId );
@@ -719,7 +726,8 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         try
         {
-            return getGraphDb().getConfig().getTxModule().getXaDataSourceManager().getXaDataSource( Config.DEFAULT_DATA_SOURCE_NAME ).getMasterForCommittedTx( tx ).first();
+            return getGraphDb().getConfig().getTxModule().getXaDataSourceManager().getXaDataSource(
+                    Config.DEFAULT_DATA_SOURCE_NAME ).getMasterForCommittedTx( tx ).first();
         }
         catch ( IOException e )
         {
@@ -787,7 +795,7 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         return storeId;
     }
-    
+
     @Override
     public String toString()
     {

@@ -17,17 +17,14 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package slavetest.manual;
+package org.neo4j.kernel.ha.zookeeper;
 
-import org.apache.commons.io.FileUtils;
-import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.com.ComException;
 
-public class ManualTestPrepare
+public class NoMasterException extends ComException
 {
-    public static void main( String[] args ) throws Exception
+    public NoMasterException()
     {
-        FileUtils.deleteDirectory( ManualTest1.PATH.getParentFile() );
-        new EmbeddedGraphDatabase( ManualTest1.PATH.getAbsolutePath() ).shutdown();
-        FileUtils.copyDirectory( ManualTest1.PATH, ManualTest2.PATH );
+        super( "No master" );
     }
 }

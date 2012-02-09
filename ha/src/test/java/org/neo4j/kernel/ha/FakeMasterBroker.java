@@ -22,7 +22,7 @@ package org.neo4j.kernel.ha;
 import java.util.Map;
 
 import org.neo4j.com.Protocol;
-import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.com.TxChecksumVerifier;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HaConfig;
@@ -34,7 +34,8 @@ public class FakeMasterBroker extends AbstractBroker
     private Map<String, String> config;
     private StoreId storeId = new StoreId();
 
-    public FakeMasterBroker( int myMachineId, GraphDatabaseService graphDb, Map<String, String> config )
+    public FakeMasterBroker( int myMachineId, AbstractGraphDatabase graphDb,
+            Map<String, String> config )
     {
         super( myMachineId, graphDb );
         this.config = config;
@@ -72,6 +73,7 @@ public class FakeMasterBroker extends AbstractBroker
     public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
     {
         return new MasterServer( new MasterImpl( graphDb, config ), Protocol.PORT, graphDb.getMessageLog(),
-                HaConfig.getMaxConcurrentTransactionsOnMasterFromConfig( config ), HaConfig.getClientLockReadTimeoutFromConfig( config ) );
+                HaConfig.getMaxConcurrentTransactionsOnMasterFromConfig( config ),
+                HaConfig.getClientLockReadTimeoutFromConfig( config ), TxChecksumVerifier.ALWAYS_MATCH );
     }
 }

@@ -29,8 +29,8 @@ import org.neo4j.helpers.Args;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Service;
 import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.ha.zookeeper.ClusterManager;
 import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 
 @Service.Implementation( BackupExtensionService.class )
 public final class HaBackupProvider extends BackupExtensionService
@@ -84,16 +84,17 @@ public final class HaBackupProvider extends BackupExtensionService
 
     private static String getMasterServerInCluster( String from, String clusterName )
     {
-        ClusterManager clusterManager = new ClusterManager( from, clusterName );
+        ZooKeeperClusterClient clusterClient = new ZooKeeperClusterClient(
+                from, clusterName );
         Pair<String, Integer> masterServer = null;
         try
         {
-            clusterManager.waitForSyncConnected();
-            Machine master = clusterManager.getMaster();
+            clusterClient.waitForSyncConnected();
+            Machine master = clusterClient.getMaster();
             masterServer = master.getServer();
             if ( masterServer != null )
             {
-                int backupPort = clusterManager.getBackupPort( master.getMachineId() );
+                int backupPort = clusterClient.getBackupPort( master.getMachineId() );
                 return String.format( ServerAddressFormat,
                         masterServer.first(), backupPort );
             }
@@ -102,7 +103,7 @@ public final class HaBackupProvider extends BackupExtensionService
         }
         finally
         {
-            clusterManager.shutdown();
+            clusterClient.shutdown();
         }
     }
 }
