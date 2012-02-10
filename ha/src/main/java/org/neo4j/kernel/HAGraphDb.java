@@ -93,7 +93,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 {
     private static final int STORE_COPY_RETRIES = 3;
     private static final int NEW_MASTER_STARTUP_RETRIES = 3;
-    private static final String TEMP_COPY = "temp-copy";
+    private static final String COPY_FROM_MASTER_TEMP = "temp-copy";
 
     private final Map<String, String> config;
     private final BrokerFactory brokerFactory;
@@ -201,6 +201,12 @@ public class HAGraphDb extends AbstractGraphDatabase
 
     private void getFreshDatabaseFromMaster( boolean branched )
     {
+        /*
+         * Don't be connected to ZK while copying the store from the master. This way we don't
+         * get interrupted from master elections. We'll get only one event, the ComException
+         * and we'll retry. Sandboxing this makes sure that if we are the new master nothing
+         * was lost.
+         */
         broker.shutdown();
         try
         {
@@ -226,6 +232,12 @@ public class HAGraphDb extends AbstractGraphDatabase
             {
                 try
                 {
+                    /*
+                     *  Either we branched so the previous store is not there
+                     *  or we did not detect a neostore file so the db is
+                     *  incomplete. Either way, it is safe to delete everything.
+                     */
+                    BranchedDataPolicy.keep_none.handle( this );
                     copyStoreFromMaster( master );
                     moveCopiedStoreIntoWorkingDir();
                     return;
@@ -237,25 +249,34 @@ public class HAGraphDb extends AbstractGraphDatabase
                             "Problems copying store from master", e );
                     sleepWithoutInterruption( 1000, "" );
                     exception = e;
+                    // Stuff in the cluster might have changed - reread.
                     master = clusterClient.getMasterClient();
-                    BranchedDataPolicy.keep_none.handle( this );
                 }
             }
-            BranchedDataPolicy.keep_none.handle( this );
             throw new RuntimeException(
                     "Gave up trying to copy store from master", exception );
-
         }
         finally
         {
+            // No matter what, start the broker again
             broker.start();
         }
     }
 
+    private File getTempDir()
+    {
+        return new File( getStoreDir(), COPY_FROM_MASTER_TEMP );
+    }
+
+    /**
+     * Moves all files from the temp directory to the current working directory.
+     * Assumes the target files do not exist and skips over the messages.log
+     * file the temp db creates.
+     */
     private void moveCopiedStoreIntoWorkingDir()
     {
         File storeDir = new File( getStoreDir() );
-        for ( File candidate : new File( storeDir, TEMP_COPY ).listFiles( new FileFilter()
+        for ( File candidate : getTempDir().listFiles( new FileFilter()
         {
             @Override
             public boolean accept( File file )
@@ -268,12 +289,22 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
     }
 
-    private String getClearedTempDir() throws Exception
+    /**
+     * Clears out the temp directory from all files contained and returns the
+     * path to it.
+     *
+     * @return The path to the directory used as a sandbox for store copies.
+     * @throws IOException if any IO error occurs
+     */
+    private File getClearedTempDir() throws IOException
     {
-        File temp = new File( getStoreDir(), TEMP_COPY );
-        temp.mkdir();
-        FileUtils.deleteFiles( temp, ".*" );
-        return temp.getAbsolutePath();
+        File temp = getTempDir();
+        if ( !temp.mkdir() )
+        {
+            FileUtils.deleteRecursively( temp );
+            temp.mkdir();
+        }
+        return temp;
     }
 
     void makeWayForNewDb()
@@ -461,7 +492,7 @@ public class HAGraphDb extends AbstractGraphDatabase
             throws Exception
     {
         getMessageLog().logMessage( "Copying store from master" );
-        String temp = getClearedTempDir();
+        String temp = getClearedTempDir().getAbsolutePath();
         Response<Void> response = master.first().copyStore( emptyContext(),
                 new ToFileStoreWriter( temp ) );
         long highestLogVersion = highestLogVersion();
