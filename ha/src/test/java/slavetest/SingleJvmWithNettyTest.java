@@ -19,25 +19,7 @@
  */
 package slavetest;
 
-import static java.util.Arrays.asList;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_LOCK_READ_TIMEOUT;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_READ_TIMEOUT;
-
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.util.Collection;
-import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Future;
-
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.neo4j.com.Client;
@@ -61,6 +43,7 @@ import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.ha.MasterClient;
 import org.neo4j.kernel.ha.MasterImpl;
+import org.neo4j.kernel.ha.zookeeper.AbstractZooKeeperManager;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
@@ -68,8 +51,36 @@ import org.neo4j.kernel.impl.transaction.LockType;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.kernel.impl.util.StringLogger;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.rmi.RemoteException;
+import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+
+import static java.util.Arrays.asList;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import static org.neo4j.kernel.HaConfig.CONFIG_KEY_LOCK_READ_TIMEOUT;
+import static org.neo4j.kernel.HaConfig.CONFIG_KEY_READ_TIMEOUT;
+
 public class SingleJvmWithNettyTest extends SingleJvmTest
 {
+    private volatile Pair<Master, Machine> cachedMasterOverride;
+
+    @Before
+    public void setUp() 
+    {
+        cachedMasterOverride = null;
+    }
+    
     @Test
     public void assertThatNettyIsUsed() throws Exception
     {
@@ -101,7 +112,8 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
 
             public Pair<Master, Machine> getMasterReally( boolean allowChange )
             {
-                return getMaster();
+                if ( allowChange ) cachedMasterOverride = null;
+                return getMasterPair();
             }
             
             @Override
@@ -111,6 +123,11 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
             }
 
             public Pair<Master, Machine> getMaster()
+            {
+                return cachedMasterOverride != null ? cachedMasterOverride : getMasterPair();
+            }
+
+            private Pair<Master, Machine> getMasterPair()
             {
                 return Pair.of( client, masterMachine );
             }
@@ -526,10 +543,10 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     @Test
     public void readLockWithoutTxOnSlaveShouldNotGrabIndefiniteLockOnMaster() throws Exception
     {
-        final long lockTimeout = 2;
+        final long lockTimeout = 1;
         initializeDbs( 1, stringMap( CONFIG_KEY_LOCK_READ_TIMEOUT, String.valueOf( lockTimeout ) ) );
+        final long id = executeJob( new CommonJobs.CreateNodeJob( true ), 0 );
         final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
-        final long[] id = new long[1];
         Thread lockHolder = new Thread( new Runnable()
         {
             @Override
@@ -539,27 +556,26 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
                 try
                 {
                     final GraphDatabaseService slaveDb = getSlave( 0 );
-                    Node node;
-                    Transaction tx = slaveDb.beginTx();
-                    try
-                    {
-                        node = slaveDb.createNode();
-                        tx.success();
-                    }
-                    finally
-                    {
-                        tx.finish();
-                    }
+                    Node node = slaveDb.getNodeById( id );
                     final Config config = ( (AbstractGraphDatabase) slaveDb ).getConfig();
                     config.getLockManager().getReadLock( node );
                     config.getLockReleaser().addLockToTransaction( node, LockType.READ );
-                    id[0] = node.getId();
-                    latch.countDownFirst();
-                    latch.awaitSecond();
                 }
                 catch ( Exception e )
                 {
                     throw new RuntimeException( e );
+                }
+                finally
+                {
+                    try
+                    {
+                        latch.countDownFirst();
+                        latch.awaitSecond();
+                    }
+                    catch ( RemoteException e )
+                    {
+                        e.printStackTrace();
+                    }
                 }
             }
         }, "slaveLockHolder" );
@@ -568,9 +584,10 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         latch.awaitFirst();
         final HighlyAvailableGraphDatabase masterDb = getMasterHaDb();
         final Transaction tx = masterDb.beginTx();
-        try {
+        try
+        {
             long startTime = System.currentTimeMillis();
-            masterDb.getNodeById(id[0]).setProperty( "name", "David" );
+            masterDb.getNodeById(id).setProperty( "name", "David" );
             long duration = System.currentTimeMillis() - startTime;
             latch.countDownSecond();
             assertTrue( "Read lock was acquired but not released.", duration < lockTimeout*1000 );
@@ -607,6 +624,34 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         
         t1.shutdown();
         t2.shutdown();
+    }
+
+    @Test
+    public void pullUpdatesDoesNewMasterWhenThereIsNoMaster() throws Exception
+    {
+        disableVerificationAfterTest();
+        initializeDbs( 2 );
+        executeJob( new CommonJobs.CreateNodeJob( true ), 0 );
+
+        cachedMasterOverride = AbstractZooKeeperManager.NO_MASTER_MACHINE_PAIR;
+        getMaster().shutdown();
+        int exceptionCount = 0;
+        for ( int i = 0; i < 3; i++ )
+        {
+            try
+            {
+                pullUpdates( 1 );
+            }
+            catch ( Exception e )
+            {
+                exceptionCount++;
+                e.printStackTrace();
+            }
+        }
+        if (exceptionCount > 1)
+        {
+            fail( "Should not have gotten more than one failed pullUpdates during master switch." );
+        }
     }
 
     private Pair<Integer, Integer> getTransactionCounts( GraphDatabaseService master )

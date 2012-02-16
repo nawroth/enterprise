@@ -74,6 +74,7 @@ import org.neo4j.kernel.ha.SlaveTxIdGenerator.SlaveTxIdGeneratorFactory;
 import org.neo4j.kernel.ha.TimeUtil.Condition;
 import org.neo4j.kernel.ha.ZooKeeperLastCommittedTxIdSetter;
 import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.kernel.ha.zookeeper.NoMasterException;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperBroker;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
@@ -81,7 +82,6 @@ import org.neo4j.kernel.impl.nioneo.store.FileSystemAbstraction;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
-import org.neo4j.kernel.impl.transaction.AbstractTransactionManager;
 import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
 import org.neo4j.kernel.impl.transaction.xaframework.LogIoUtils;
 import org.neo4j.kernel.impl.transaction.xaframework.NoSuchLogVersionException;
@@ -95,6 +95,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 {
     private static final int STORE_COPY_RETRIES = 3;
     private static final int NEW_MASTER_STARTUP_RETRIES = 3;
+    public static final String COPY_FROM_MASTER_TEMP = "temp-copy";
 
     private final Map<String, String> config;
     private final BrokerFactory brokerFactory;
@@ -106,7 +107,10 @@ public class HAGraphDb extends AbstractGraphDatabase
     private volatile ScheduledExecutorService updatePuller;
     private volatile long updateTime = 0;
     private volatile Throwable causeOfShutdown;
-    private final long startupTime;
+
+    // Is used as a session id and is updated on each internal restart
+    private long startupTime;
+
     private final BranchedDataPolicy branchedDataPolicy;
     private final HaConfig.SlaveUpdateMode slaveUpdateMode;
     private final int readTimeout;
@@ -144,14 +148,13 @@ public class HAGraphDb extends AbstractGraphDatabase
      * ONLY FOR TESTING
      */
     public HAGraphDb( String storeDir, Map<String, String> config,
-            BrokerFactory brokerFactory, ClusterClient clusterManager )
+            BrokerFactory brokerFactory, ClusterClient clusterClient )
     {
         super( storeDir );
         if ( config == null )
         {
             throw new IllegalArgumentException( "null config, proper configuration required" );
         }
-        this.startupTime = System.currentTimeMillis();
         this.config = config;
         initializeTxManagerKernelPanicEventHandler();
         this.readTimeout = HaConfig.getClientReadTimeoutFromConfig( config );
@@ -161,8 +164,8 @@ public class HAGraphDb extends AbstractGraphDatabase
         config.put( Config.KEEP_LOGICAL_LOGS, "true" );
         this.brokerFactory = brokerFactory != null ? brokerFactory : defaultBrokerFactory();
         this.broker = this.brokerFactory.create( this, config );
-        this.clusterClient = clusterManager != null ? clusterManager
-                : defaultClusterManager();
+        this.clusterClient = clusterClient != null ? clusterClient
+                : defaultClusterClient();
         this.pullUpdates = false;
         
         // Start a thread just to kick-start the process of starting up.
@@ -225,41 +228,109 @@ public class HAGraphDb extends AbstractGraphDatabase
     private void getFreshDatabaseFromMaster( boolean branched )
     {
         /*
-         * Use the cluster client here instead of the broker provided master client.
-         * The problem is that clients from the broker are shutdown when zk hiccups
-         * so the channel is closed and the copy operation fails. Clients provided from
-         * the clusterClient do not suffer from that - after getting hold of such an
-         * object, even if the zk cluster goes down the operation will succeed, dependent
-         * only on the source machine being alive. If, in the meantime, the master changes
-         * then the verification after the new master election will call us again.
+         * Don't be connected to ZK while copying the store from the master. This way we don't
+         * get interrupted from master elections. We'll get only one event, the ComException
+         * and we'll retry. Sandboxing this makes sure that if we are the new master nothing
+         * was lost.
          */
-        Pair<Master, Machine> master = clusterClient.getMasterClient();
-        // Assume it's shut down at this point
-        internalShutdown( false );
-        if ( branched )
+        broker.shutdown();
+        try
         {
-            makeWayForNewDb();
-        }
+            /*
+             * Use the cluster client here instead of the broker provided master client.
+             * The problem is that clients from the broker are shutdown when zk hiccups
+             * so the channel is closed and the copy operation fails. Clients provided from
+             * the clusterClient do not suffer from that - after getting hold of such an
+             * object, even if the zk cluster goes down the operation will succeed, dependent
+             * only on the source machine being alive. If, in the meantime, the master changes
+             * then the verification after the new master election will call us again.
+             */
+            Pair<Master, Machine> master = clusterClient.getMasterClient();
+            // Assume it's shut down at this point
+            internalShutdown( false );
 
-        Exception exception = null;
-        for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
-        {
-            try
+            if ( branched )
             {
-                copyStoreFromMaster( master );
-                return;
+                makeWayForNewDb();
             }
-            // TODO Maybe catch IOException and treat it more seriously?
-            catch ( Exception e )
+            Exception exception = null;
+            for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
             {
-                getMessageLog().logMessage( "Problems copying store from master", e );
-                sleepWithoutInterruption( 1000, "" );
-                exception = e;
-                master = clusterClient.getMasterClient();
-                BranchedDataPolicy.keep_none.handle( this );
+                try
+                {
+                    /*
+                     *  Either we branched so the previous store is not there
+                     *  or we did not detect a neostore file so the db is
+                     *  incomplete. Either way, it is safe to delete everything.
+                     */
+                    BranchedDataPolicy.keep_none.handle( this );
+                    copyStoreFromMaster( master );
+                    moveCopiedStoreIntoWorkingDir();
+                    return;
+                }
+                // TODO Maybe catch IOException and treat it more seriously?
+                catch ( Exception e )
+                {
+                    getMessageLog().logMessage(
+                            "Problems copying store from master", e );
+                    sleepWithoutInterruption( 1000, "" );
+                    exception = e;
+                    // Stuff in the cluster might have changed - reread.
+                    master = clusterClient.getMasterClient();
+                }
             }
+            throw new RuntimeException(
+                    "Gave up trying to copy store from master", exception );
         }
-        throw new RuntimeException( "Gave up trying to copy store from master", exception );
+        finally
+        {
+            // No matter what, start the broker again
+            broker.start();
+        }
+    }
+
+    private File getTempDir()
+    {
+        return new File( getStoreDir(), COPY_FROM_MASTER_TEMP );
+    }
+
+    /**
+     * Moves all files from the temp directory to the current working directory.
+     * Assumes the target files do not exist and skips over the messages.log
+     * file the temp db creates.
+     */
+    private void moveCopiedStoreIntoWorkingDir()
+    {
+        File storeDir = new File( getStoreDir() );
+        for ( File candidate : getTempDir().listFiles( new FileFilter()
+        {
+            @Override
+            public boolean accept( File file )
+            {
+                return !file.getName().equals( StringLogger.DEFAULT_NAME );
+            }
+        } ) )
+        {
+            FileUtils.moveFile( candidate, storeDir );
+        }
+    }
+
+    /**
+     * Clears out the temp directory from all files contained and returns the
+     * path to it.
+     *
+     * @return The path to the directory used as a sandbox for store copies.
+     * @throws IOException if any IO error occurs
+     */
+    private File getClearedTempDir() throws IOException
+    {
+        File temp = getTempDir();
+        if ( !temp.mkdir() )
+        {
+            FileUtils.deleteRecursively( temp );
+            temp.mkdir();
+        }
+        return temp;
     }
     
     void makeWayForNewDb()
@@ -389,11 +460,14 @@ public class HAGraphDb extends AbstractGraphDatabase
             throws Exception
     {
         getMessageLog().logMessage( "Copying store from master" );
+        String temp = getClearedTempDir().getAbsolutePath();
         Response<Void> response = master.first().copyStore( emptyContext(),
-                new ToFileStoreWriter( getStoreDir() ) );
+                new ToFileStoreWriter( temp ) );
         long highestLogVersion = highestLogVersion();
-        if ( highestLogVersion > -1 ) NeoStore.setVersion( getStoreDir(), highestLogVersion + 1 );
-        EmbeddedGraphDatabase copiedDb = new EmbeddedGraphDatabase( getStoreDir(), stringMap( KEEP_LOGICAL_LOGS, "true" ) );
+        if ( highestLogVersion > -1 )
+            NeoStore.setVersion( temp, highestLogVersion + 1 );
+        EmbeddedGraphDatabase copiedDb = new EmbeddedGraphDatabase( temp,
+                stringMap( KEEP_LOGICAL_LOGS, "true" ) );
         try
         {
             MasterUtil.applyReceivedTransactions( response, copiedDb, MasterUtil.txHandlerForFullCopy() );
@@ -401,6 +475,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         finally
         {
             copiedDb.shutdown();
+            response.close();
         }
         getMessageLog().logMessage( "Done copying store from master" );
     }
@@ -480,11 +555,12 @@ public class HAGraphDb extends AbstractGraphDatabase
         };
     }
 
-    private ClusterClient defaultClusterManager()
+    private ClusterClient defaultClusterClient()
     {
         return new ZooKeeperClusterClient(
                 HaConfig.getCoordinatorsFromConfig( config ),
-                HaConfig.getClusterNameFromConfig( config ), this );
+                HaConfig.getClusterNameFromConfig( config ), this,
+                HaConfig.getZKSessionTimeoutFromConfig( config ) );
     }
 
     public Broker getBroker()
@@ -520,6 +596,11 @@ public class HAGraphDb extends AbstractGraphDatabase
             }
         }
         catch ( ZooKeeperException e )
+        {
+            newMaster( e );
+            throw e;
+        }
+        catch ( NoMasterException e )
         {
             newMaster( e );
             throw e;
@@ -577,7 +658,7 @@ public class HAGraphDb extends AbstractGraphDatabase
      * doesn't keep a zoo client open - so is no reason to recreate it
      */
     @Override
-    public void reconnect( Exception e )
+    public synchronized void reconnect( Exception e )
     {
         if ( broker != null )
         {
@@ -622,28 +703,25 @@ public class HAGraphDb extends AbstractGraphDatabase
                     ((SlaveIdGeneratorFactory) getConfig().getIdGeneratorFactory()).forgetIdAllocationsFromMaster();
                 }
             }
-            if ( newDb != null )
-            {
-                doAfterLocalGraphStarted( newDb );
-
-                // Assign the db last
-                this.localGraph = newDb;
-            }
-            /*
-             * We have to instantiate the update puller after the local db has been assigned.
-             * Another way to do it is to wait on a LocalGraphAvailableCondition. I chose this,
-             * it is simpler to follow, provided you know what a volatile does.
-             */
             if ( masterServer == null )
             {
                 // The above being true means we are a slave
                 instantiateAutoUpdatePullerIfConfigSaysSo();
-                pullUpdates = true;
-                checkAndRecoverCorruptLogs( localGraph, false );
+                checkAndRecoverCorruptLogs( newDb != null ? newDb : localGraph,
+                        false );
                 ensureDataConsistencyWithMaster( newDb != null ? newDb
                         : localGraph, master );
                 getMessageLog().logMessage( "Data consistent with master" );
             }
+            if ( newDb != null )
+            {
+                doAfterLocalGraphStarted( newDb );
+
+                // Assign the db last so that no references leak
+                this.localGraph = newDb;
+                // Now ok to pull updates
+            }
+            pullUpdates = true;
         }
         catch ( Throwable t )
         {
@@ -705,6 +783,7 @@ public class HAGraphDb extends AbstractGraphDatabase
         // instantiateAutoUpdatePullerIfConfigSaysSo() moved to
         // reevaluateMyself(), after the local db has been assigned
         logHaInfo( "Started as slave" );
+        this.startupTime = System.currentTimeMillis();
         return result;
     }
 
@@ -721,6 +800,7 @@ public class HAGraphDb extends AbstractGraphDatabase
                 CommonFactories.defaultFileSystemAbstraction() );
         this.masterServer = (MasterServer) broker.instantiateMasterServer( this );
         logHaInfo( "Started as master" );
+        this.startupTime = System.currentTimeMillis();
         return result;
     }
 
@@ -770,23 +850,10 @@ public class HAGraphDb extends AbstractGraphDatabase
             throw new BranchedDataException( "Maybe not branched data, but it could solve it", e );
         }
 
-        long endTime = System.currentTimeMillis()+readTimeout*1000;
-        Pair<Integer, Long> mastersMaster = null;
-        RuntimeException failure = null;
-        while ( mastersMaster == null && System.currentTimeMillis() < endTime )
-        {
-            try
-            {
-                mastersMaster = master.first().getMasterIdForCommittedTx(
-                        myLastCommittedTx, getStoreId( newDb ) ).response();
-            }
-            catch ( ComException e )
-            {   // Maybe new master isn't up yet... let's wait a little and retry
-                failure = e;
-                sleepWithoutInterruption( 500, "Failed waiting for next attempt to contact master" );
-            }
-        }
-        if ( mastersMaster == null ) throw failure;
+        Response<Pair<Integer, Long>> response = master.first().getMasterIdForCommittedTx(
+                myLastCommittedTx, getStoreId( newDb ) );
+        Pair<Integer, Long> mastersMaster = response.response();
+        response.close();
 
         if ( myMaster.first() != XaLogicalLog.MASTER_ID_REPRESENTING_NO_MASTER
             && !myMaster.equals( mastersMaster ) )
@@ -921,7 +988,11 @@ public class HAGraphDb extends AbstractGraphDatabase
         }
         if ( this.localGraph != null )
         {
-            ((AbstractTransactionManager)localGraph.getConfig().getTxModule().getTxManager()).attemptWaitForTxCompletionAndBlockFutureTransactions( 7000 );
+            /*
+             * Commented out until this is verified that it works as expected or a better solution comes along.
+             *
+             * ((AbstractTransactionManager)localGraph.getConfig().getTxModule().getTxManager()).attemptWaitForTxCompletionAndBlockFutureTransactions( 7000 );
+             */
             if ( rotateLogs )
             {
                 for ( XaDataSource dataSource : getConfig().getTxModule().getXaDataSourceManager().getAllRegisteredDataSources() )
@@ -1016,6 +1087,10 @@ public class HAGraphDb extends AbstractGraphDatabase
             newMaster( e );
             throw new RuntimeException( e );
         }
+        finally
+        {
+            response.close();
+        }
     }
 
     @Override
@@ -1038,6 +1113,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 
         Throwable cause = null;
         int i = 0;
+        boolean unexpectedException = false;
         while ( i++ < NEW_MASTER_STARTUP_RETRIES )
         {
             try
@@ -1077,10 +1153,11 @@ public class HAGraphDb extends AbstractGraphDatabase
             catch ( Throwable t )
             {
                 cause = t;
+                unexpectedException = true;
                 break;
             }
         }
-        if ( cause != null && i == NEW_MASTER_STARTUP_RETRIES )
+        if ( cause != null && unexpectedException )
         {
             getMessageLog().logMessage(
                     "Reevaluation ended in unknown exception " + cause
@@ -1102,7 +1179,7 @@ public class HAGraphDb extends AbstractGraphDatabase
 
     public boolean isMaster()
     {
-        return broker.iAmMaster();
+        return getMasterServerIfMaster() != null;
     }
 
     @Override

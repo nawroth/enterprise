@@ -53,13 +53,6 @@ import org.neo4j.kernel.impl.util.StringLogger;
 public abstract class AbstractZooKeeperManager implements Watcher
 {
     protected static final String HA_SERVERS_CHILD = "ha-servers";
-    /*
-     * The timeout our client and the ZK cluster will negotiate. Round trip
-     * from Tokyo to Oregon on AWS with a cold ZK install (hence lots of writes
-     * on disk on session establishment) takes about 8 secs. 10 should be enough
-     * for everybody.
-     */
-    protected static final int SESSION_TIME_OUT = 10000;
 
     private final String servers;
     private final Map<Integer, String> haServersCache = Collections.synchronizedMap(
@@ -71,15 +64,19 @@ public abstract class AbstractZooKeeperManager implements Watcher
     private final int maxConcurrentChannelsPerSlave;
     private final int clientReadTimeout;
     private final int clientLockReadTimeout;
+    private final long sessionTimeout;
 
-    public AbstractZooKeeperManager( String servers, AbstractGraphDatabase graphDb,
-            int clientReadTimeout, int clientLockReadTimeout, int maxConcurrentChannelsPerSlave )
+    public AbstractZooKeeperManager( String servers,
+            AbstractGraphDatabase graphDb, int clientReadTimeout,
+            int clientLockReadTimeout, int maxConcurrentChannelsPerSlave,
+            long sessionTimeout )
     {
         this.servers = servers;
         this.graphDb = graphDb;
         this.clientLockReadTimeout = clientLockReadTimeout;
         this.maxConcurrentChannelsPerSlave = maxConcurrentChannelsPerSlave;
         this.clientReadTimeout = clientReadTimeout;
+        this.sessionTimeout = sessionTimeout;
         this.msgLog = graphDb != null ? graphDb.getMessageLog() : StringLogger.DEV_NULL;
     }
 
@@ -87,13 +84,22 @@ public abstract class AbstractZooKeeperManager implements Watcher
     {
         try
         {
-            return new ZooKeeper( getServers(), SESSION_TIME_OUT, this );
+            return new ZooKeeper( getServers(), getSessionTimeout(), this );
         }
         catch ( IOException e )
         {
             throw new ZooKeeperException(
                 "Unable to create zoo keeper client", e );
         }
+    }
+
+    /*
+     * Returns int because the ZooKeeper constructor expects an integer,
+     * but we are sane and manipulate time as longs.
+     */
+    protected int getSessionTimeout()
+    {
+        return (int) sessionTimeout;
     }
 
     public abstract ZooKeeper getZooKeeper( boolean sync );
@@ -378,7 +384,7 @@ public abstract class AbstractZooKeeperManager implements Watcher
 
         private ComException noMasterException()
         {
-            return new ComException( "No master" );
+            return new NoMasterException();
         }
 
         @Override
@@ -488,6 +494,6 @@ public abstract class AbstractZooKeeperManager implements Watcher
         }
     };
 
-    private static final Pair<Master, Machine> NO_MASTER_MACHINE_PAIR = Pair.of(
+    public static final Pair<Master, Machine> NO_MASTER_MACHINE_PAIR = Pair.of(
             NO_MASTER, (Machine) ZooKeeperMachine.NO_MACHINE );
 }

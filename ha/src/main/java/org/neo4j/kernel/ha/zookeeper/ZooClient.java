@@ -87,11 +87,11 @@ public class ZooClient extends AbstractZooKeeperManager
 
     public ZooClient( AbstractGraphDatabase graphDb, Map<String, String> config, ResponseReceiver receiver )
     {
-        super( HaConfig.getCoordinatorsFromConfig( config ),
-            graphDb,
-            HaConfig.getClientReadTimeoutFromConfig( config ),
-            HaConfig.getClientLockReadTimeoutFromConfig( config ),
-            HaConfig.getMaxConcurrentChannelsPerSlaveFromConfig( config ) );
+        super( HaConfig.getCoordinatorsFromConfig( config ), graphDb,
+                HaConfig.getClientReadTimeoutFromConfig( config ),
+                HaConfig.getClientLockReadTimeoutFromConfig( config ),
+                HaConfig.getMaxConcurrentChannelsPerSlaveFromConfig( config ),
+                HaConfig.getZKSessionTimeoutFromConfig( config ) );
         this.receiver = receiver;
         machineId = HaConfig.getMachineIdFromConfig( config );
         backupPort = HaConfig.getBackupPortFromConfig( config );
@@ -118,10 +118,17 @@ public class ZooClient extends AbstractZooKeeperManager
 
     public void process( WatchedEvent event )
     {
+        String path = event.getPath();
+        msgLog.logMessage( this + ", " + new Date() + " Got event: " + event
+                           + " (path=" + path + ")", true );
+        if ( shutdown )
+        {
+            msgLog.logMessage( this
+                               + ", is shutdown, the above event is ignored" );
+            return;
+        }
         try
         {
-            String path = event.getPath();
-            msgLog.logMessage( this + ", " + new Date() + " Got event: " + event + " (path=" + path + ")", true );
             if ( path == null && event.getState() == Watcher.Event.KeeperState.Expired )
             {
                 keeperState = KeeperState.Expired;
@@ -259,7 +266,7 @@ public class ZooClient extends AbstractZooKeeperManager
                 }
                 currentTime = System.currentTimeMillis();
             }
-            while ( (currentTime - startTime) < SESSION_TIME_OUT );
+            while ( ( currentTime - startTime ) < getSessionTimeout() );
 
             if ( keeperState != KeeperState.SyncConnected )
             {
@@ -742,6 +749,11 @@ public class ZooClient extends AbstractZooKeeperManager
         super.shutdown();
     }
 
+    public boolean isShutdown()
+    {
+        return shutdown;
+    }
+
     @Override
     public ZooKeeper getZooKeeper( boolean sync )
     {
@@ -795,7 +807,7 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         return storeId;
     }
-    
+
     @Override
     public String toString()
     {
