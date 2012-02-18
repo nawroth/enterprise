@@ -32,7 +32,6 @@ import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.kernel.impl.nioneo.store.IdGenerator;
 import org.neo4j.kernel.impl.nioneo.store.IdRange;
-import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 
 public class SlaveIdGenerator implements IdGenerator
 {

@@ -21,15 +21,12 @@
 package org.neo4j.kernel.ha;
 
 import java.util.Map;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.DefaultFileSystemAbstraction;
+
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.IdGeneratorFactory;
-import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.impl.core.LastCommittedTxIdSetter;
 import org.neo4j.kernel.impl.core.NodeProxy;
 import org.neo4j.kernel.impl.core.RelationshipProxy;
-import org.neo4j.kernel.impl.nioneo.store.FileSystemAbstraction;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreFactory;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;

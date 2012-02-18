@@ -19,39 +19,6 @@
  */
 package org.neo4j.kernel.ha;
 
-import org.neo4j.com.MasterUtil;
-import org.neo4j.com.Response;
-import org.neo4j.com.SlaveContext;
-import org.neo4j.com.StoreWriter;
-import org.neo4j.com.TxExtractor;
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.PropertyContainer;
-import org.neo4j.graphdb.Relationship;
-import org.neo4j.helpers.Exceptions;
-import org.neo4j.helpers.Pair;
-import org.neo4j.helpers.Predicate;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
-import org.neo4j.kernel.DeadlockDetectedException;
-import org.neo4j.kernel.GraphDatabaseSPI;
-import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.HighlyAvailableGraphDatabase;
-import org.neo4j.kernel.IdType;
-import org.neo4j.kernel.impl.core.LockReleaser;
-import org.neo4j.kernel.impl.core.NodeManager;
-import org.neo4j.kernel.impl.nioneo.store.IdGenerator;
-import org.neo4j.kernel.impl.nioneo.store.StoreId;
-import org.neo4j.kernel.impl.transaction.IllegalResourceException;
-import org.neo4j.kernel.impl.transaction.LockManager;
-import org.neo4j.kernel.impl.transaction.LockType;
-import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
-import org.neo4j.kernel.impl.util.StringLogger;
-
-import javax.transaction.NotSupportedException;
-import javax.transaction.SystemException;
-import javax.transaction.Transaction;
-import javax.transaction.TransactionManager;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -62,6 +29,35 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+
+import javax.transaction.NotSupportedException;
+import javax.transaction.SystemException;
+import javax.transaction.Transaction;
+import javax.transaction.TransactionManager;
+
+import org.neo4j.com.MasterUtil;
+import org.neo4j.com.Response;
+import org.neo4j.com.SlaveContext;
+import org.neo4j.com.StoreWriter;
+import org.neo4j.com.TxExtractor;
+import org.neo4j.graphdb.Node;
+import org.neo4j.graphdb.PropertyContainer;
+import org.neo4j.graphdb.Relationship;
+import org.neo4j.helpers.Exceptions;
+import org.neo4j.helpers.Pair;
+import org.neo4j.helpers.Predicate;
+import org.neo4j.kernel.DeadlockDetectedException;
+import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.kernel.IdType;
+import org.neo4j.kernel.impl.core.LockReleaser;
+import org.neo4j.kernel.impl.core.NodeManager;
+import org.neo4j.kernel.impl.nioneo.store.IdGenerator;
+import org.neo4j.kernel.impl.nioneo.store.StoreId;
+import org.neo4j.kernel.impl.transaction.IllegalResourceException;
+import org.neo4j.kernel.impl.transaction.LockManager;
+import org.neo4j.kernel.impl.transaction.LockType;
+import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
+import org.neo4j.kernel.impl.util.StringLogger;
 
 /**
  * This is the real master code that executes on a master. The actual

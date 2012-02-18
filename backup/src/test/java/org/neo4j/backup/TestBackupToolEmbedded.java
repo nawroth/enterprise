@@ -21,7 +21,6 @@ package org.neo4j.backup;
 
 import static org.junit.Assert.assertEquals;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
 import static org.neo4j.kernel.Config.osIsWindows;
 
 import java.io.File;

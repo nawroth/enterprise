@@ -20,7 +20,6 @@
 package org.neo4j.backup;
 
 import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
-import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
 import static org.neo4j.kernel.Config.parseMapFromConfigValue;
 
 import org.neo4j.helpers.Args;
@@ -30,7 +29,6 @@ import org.neo4j.kernel.ConfigProxy;
 import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.KernelExtension;
-import org.neo4j.kernel.impl.util.StringLogger;
 
 @Service.Implementation( KernelExtension.class )
 public class OnlineBackupExtension extends KernelExtension<BackupServer>

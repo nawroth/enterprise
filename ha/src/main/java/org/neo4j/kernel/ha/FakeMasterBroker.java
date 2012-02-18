@@ -19,17 +19,10 @@
  */
 package org.neo4j.kernel.ha;
 
-import java.util.Map;
-
 import org.neo4j.com.Client;
 import org.neo4j.com.Protocol;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.ConfigProxy;
 import org.neo4j.kernel.GraphDatabaseSPI;
-import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.ha.zookeeper.ZooClient;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;

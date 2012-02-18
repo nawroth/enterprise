@@ -19,10 +19,6 @@
  */
 package org.neo4j.kernel.ha;
 
-import java.util.Map;
-
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.ConfigurationPrefix;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.zookeeper.Machine;

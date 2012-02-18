@@ -29,21 +29,14 @@ import java.util.Map;
 
 import javax.management.remote.JMXServiceURL;
 
-import org.neo4j.com.StoreIdGetter;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.ConfigurationPrefix;
 import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.ConnectionInformation;
 import org.neo4j.kernel.ha.Master;
-import org.neo4j.kernel.ha.MasterGraphDatabase;
-import org.neo4j.kernel.ha.MasterImpl;
-import org.neo4j.kernel.ha.MasterServer;
-import org.neo4j.kernel.ha.ResponseReceiver;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.management.Neo4jManager;

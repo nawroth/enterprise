@@ -40,7 +40,6 @@ import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.TransactionFailureException;
 import org.neo4j.graphdb.index.Index;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.index.impl.lucene.LuceneDataSource;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.Config;
 import org.neo4j.kernel.EmbeddedGraphDatabase;

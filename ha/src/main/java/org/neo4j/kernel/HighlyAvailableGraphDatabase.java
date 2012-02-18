@@ -19,6 +19,11 @@
  */
 package org.neo4j.kernel;
 
+import static org.neo4j.helpers.Exceptions.launderedException;
+import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import static org.neo4j.kernel.Config.KEEP_LOGICAL_LOGS;
+import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
+
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
@@ -32,7 +37,9 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
 import javax.transaction.TransactionManager;
+
 import org.neo4j.com.Client;
 import org.neo4j.com.ComException;
 import org.neo4j.com.MasterUtil;
@@ -81,11 +88,6 @@ import org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.kernel.info.DiagnosticsManager;
-
-import static org.neo4j.helpers.Exceptions.*;
-import static org.neo4j.helpers.collection.MapUtil.*;
-import static org.neo4j.kernel.Config.*;
-import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.*;
 
 public class HighlyAvailableGraphDatabase
         implements GraphDatabaseService, GraphDatabaseSPI

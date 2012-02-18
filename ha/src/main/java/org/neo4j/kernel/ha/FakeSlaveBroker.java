@@ -19,9 +19,7 @@
  */
 package org.neo4j.kernel.ha;
 
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 

@@ -19,9 +19,7 @@
  */
 package org.neo4j.kernel.ha;
 
-import javax.transaction.SystemException;
 import javax.transaction.Transaction;
-import javax.transaction.TransactionManager;
 
 import org.neo4j.com.ComException;
 import org.neo4j.com.Response;

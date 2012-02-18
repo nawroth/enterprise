@@ -20,7 +20,9 @@
 package slavetest;
 
 import java.util.Collection;
+
 import javax.transaction.TransactionManager;
+
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;

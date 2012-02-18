@@ -22,9 +22,7 @@ package org.neo4j.kernel.ha;
 
 import java.util.HashMap;
 import java.util.Map;
-import org.neo4j.com.Server;
-import org.neo4j.helpers.Args;
-import org.neo4j.kernel.Config;
+
 import org.neo4j.kernel.ConfigurationMigrator;
 import org.neo4j.kernel.impl.util.StringLogger;
 

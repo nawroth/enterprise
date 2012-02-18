@@ -19,11 +19,11 @@
  */
 package org.neo4j.com;
 
-import org.junit.Test;
-import org.neo4j.helpers.Pair;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+
+import org.junit.Test;
+import org.neo4j.helpers.Pair;
 
 public class TestSlaveContext
 {

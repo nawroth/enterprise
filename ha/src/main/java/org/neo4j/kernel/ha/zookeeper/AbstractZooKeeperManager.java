@@ -19,7 +19,6 @@
  */
 package org.neo4j.kernel.ha.zookeeper;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.Collections;
@@ -28,23 +27,17 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooKeeper;
-import org.neo4j.com.Client.ConnectionLostHandler;
 import org.neo4j.com.ComException;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
-import org.neo4j.com.StoreIdGetter;
 import org.neo4j.com.StoreWriter;
 import org.neo4j.com.TxExtractor;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.IdType;
 import org.neo4j.kernel.ha.IdAllocation;
 import org.neo4j.kernel.ha.LockResult;
 import org.neo4j.kernel.ha.Master;
-import org.neo4j.kernel.ha.MasterClient;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 

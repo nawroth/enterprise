@@ -21,8 +21,6 @@ package org.neo4j.backup;
 
 import java.util.Map;
 
-import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.KernelExtensionContractTest;
 
 public class TestOnlineBackupExtension extends KernelExtensionContractTest<BackupServer, OnlineBackupExtension>

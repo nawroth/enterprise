@@ -21,7 +21,6 @@ package org.neo4j.kernel.ha;
 
 import javax.transaction.Transaction;
 
-import org.neo4j.kernel.CommonFactories;
 import org.neo4j.kernel.impl.transaction.TxHook;
 
 public class MasterTxHook implements TxHook

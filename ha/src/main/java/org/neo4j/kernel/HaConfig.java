@@ -19,16 +19,10 @@
  */
 package org.neo4j.kernel;
 
-import org.neo4j.com.Client;
-import org.neo4j.kernel.ha.TimeUtil;
-
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.Map;
 
-import static java.util.Arrays.asList;
-import static org.neo4j.backup.OnlineBackupExtension.parsePort;
-import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
+import org.neo4j.com.Client;
+import org.neo4j.kernel.ha.TimeUtil;
 
 public class HaConfig
 {

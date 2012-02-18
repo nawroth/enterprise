@@ -36,8 +36,8 @@ import org.neo4j.com.Protocol;
 import org.neo4j.helpers.Format;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.ConfigProxy;
-import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.Broker;
 import org.neo4j.kernel.ha.FakeMasterBroker;
@@ -48,7 +48,6 @@ import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.management.HighAvailability;
 import org.neo4j.test.subprocess.SubProcess;
 
-import slavetest.AbstractHaTest;
 import slavetest.Job;
 
 @Ignore

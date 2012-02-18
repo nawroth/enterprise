@@ -19,30 +19,29 @@
  */
 package slavetest;
 
-import org.junit.After;
-import org.junit.Ignore;
-import org.neo4j.com.Client;
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
-import org.neo4j.kernel.ConfigProxy;
-import org.neo4j.kernel.EmbeddedGraphDatabase;
-import org.neo4j.kernel.GraphDatabaseSPI;
-import org.neo4j.kernel.HighlyAvailableGraphDatabase;
-import org.neo4j.kernel.HaConfig;
-import org.neo4j.kernel.ha.AbstractBroker;
-import org.neo4j.kernel.ha.Broker;
-import org.neo4j.kernel.ha.FakeMasterBroker;
-import org.neo4j.kernel.ha.FakeSlaveBroker;
-import org.neo4j.kernel.ha.MasterImpl;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+
+import org.junit.After;
+import org.junit.Ignore;
+import org.neo4j.com.Client;
+import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.helpers.collection.MapUtil;
+import org.neo4j.kernel.Config;
+import org.neo4j.kernel.ConfigProxy;
+import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.HighlyAvailableGraphDatabase;
+import org.neo4j.kernel.ha.AbstractBroker;
+import org.neo4j.kernel.ha.Broker;
+import org.neo4j.kernel.ha.FakeMasterBroker;
+import org.neo4j.kernel.ha.FakeSlaveBroker;
+import org.neo4j.kernel.ha.MasterImpl;
 import org.neo4j.kernel.ha.zookeeper.ZooClient;
 
 @Ignore( "SingleJvmWithNettyTest covers this and more" )

@@ -19,6 +19,8 @@
  */
 package org.neo4j.test.ha;
 
+import static java.lang.management.ManagementFactory.getPlatformMBeanServer;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -40,8 +42,6 @@ import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.ha.zookeeper.ClusterManager;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.subprocess.SubProcess;
-
-import static java.lang.management.ManagementFactory.getPlatformMBeanServer;
 
 @Ignore
 public final class LocalhostZooKeeperCluster

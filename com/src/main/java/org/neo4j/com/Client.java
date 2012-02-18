@@ -48,10 +48,7 @@ import org.neo4j.helpers.Exceptions;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Triplet;
 import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
-import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
-import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 import org.neo4j.kernel.impl.util.StringLogger;
 
 /**

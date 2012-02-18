@@ -26,7 +26,6 @@ import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 
 import javax.management.remote.JMXServiceURL;
 
@@ -39,15 +38,10 @@ import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 import org.neo4j.backup.OnlineBackupExtension;
 import org.neo4j.com.Client;
-import org.neo4j.com.Client.ConnectionLostHandler;
-import org.neo4j.com.ComException;
 import org.neo4j.com.Server;
 import org.neo4j.com.StoreIdGetter;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Exceptions;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.ConfigurationPrefix;
 import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.HaConfig;

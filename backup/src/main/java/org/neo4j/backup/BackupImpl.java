@@ -23,7 +23,6 @@ import org.neo4j.com.MasterUtil;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
 import org.neo4j.com.StoreWriter;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.kernel.Config;
 import org.neo4j.kernel.GraphDatabaseSPI;
 

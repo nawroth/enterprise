@@ -54,7 +54,6 @@ import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.helpers.collection.IterableWrapper;
 import org.neo4j.helpers.collection.IteratorUtil;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
 import org.neo4j.kernel.impl.batchinsert.BatchInserter;
 import org.neo4j.kernel.impl.batchinsert.BatchInserterImpl;
