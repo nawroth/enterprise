@@ -30,6 +30,7 @@ import org.junit.After;
 import org.junit.Ignore;
 import org.neo4j.com.Client;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Node;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.Config;
 import org.neo4j.kernel.ConfigProxy;
@@ -43,11 +44,12 @@ import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.FakeSlaveBroker;
 import org.neo4j.kernel.ha.MasterImpl;
 import org.neo4j.kernel.ha.zookeeper.ZooClient;
+import org.neo4j.test.BatchTransaction;
 
 @Ignore( "SingleJvmWithNettyTest covers this and more" )
 public class SingleJvmTest extends AbstractHaTest
 {
-    private MasterImpl master;
+    private TestMaster master;
     private List<GraphDatabaseSPI> haDbs;
 
     @After
@@ -102,13 +104,34 @@ public class SingleJvmTest extends AbstractHaTest
         startDb( machineId, config, awaitStarted );
         return machineId;
     }
+    
+    @Override
+    protected void createBigMasterStore( int numberOfMegabytes )
+    {
+        GraphDatabaseSPI db = getMaster().getGraphDb();
+        BatchTransaction tx = BatchTransaction.beginBatchTx( db );
+        try
+        {
+            byte[] array = new byte[100000];
+            for ( int i = 0; i < numberOfMegabytes*10; i++ )
+            {
+                Node node = db.createNode();
+                node.setProperty( "array", array );
+                tx.increment();
+            }
+        }
+        finally
+        {
+            tx.finish();
+        }
+    }
 
     @Override
     protected void startDb( final int machineId, final Map<String, String> config, boolean awaitStarted )
     {
         haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseSPI>();
         File slavePath = dbPath( machineId );
-        Map<String,String> cfg = new HashMap<String, String>(config);
+        final Map<String,String> cfg = new HashMap<String, String>(config);
         cfg.put( HaConfig.CONFIG_KEY_SERVER_ID, Integer.toString(machineId) );
         cfg.put( Config.KEEP_LOGICAL_LOGS, "true" );
         addDefaultReadTimeout( cfg );
@@ -117,7 +140,7 @@ public class SingleJvmTest extends AbstractHaTest
             @Override
             protected Broker createBroker()
             {
-                return makeSlaveBroker( master, 0, machineId, this, config );
+                return makeSlaveBroker( master, 0, machineId, this, cfg );
             }
         };
         
@@ -140,7 +163,8 @@ public class SingleJvmTest extends AbstractHaTest
     {
         ZooClient.Configuration zooConfig = ConfigProxy.config( extraConfig , ZooClient.Configuration.class );
         int timeOut = zooConfig.lock_read_timeout( zooConfig.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) );
-        master = new MasterImpl( startUpMasterDb( extraConfig ), timeOut );
+        HighlyAvailableGraphDatabase db = startUpMasterDb( extraConfig );
+        master = new TestMaster( new MasterImpl( db, timeOut ), db );
     }
     
     protected HighlyAvailableGraphDatabase startUpMasterDb( Map<String, String> extraConfig ) throws Exception
@@ -178,12 +202,12 @@ public class SingleJvmTest extends AbstractHaTest
         return new FakeMasterBroker( brokerConfig, zooConfig);
     }
 
-    protected Broker makeSlaveBroker( MasterImpl master, int masterId, int id, HighlyAvailableGraphDatabase graphDb, Map<String, String> config )
+    protected Broker makeSlaveBroker( TestMaster master, int masterId, int id, HighlyAvailableGraphDatabase graphDb, Map<String, String> config )
     {
         return new FakeSlaveBroker( master, masterId, ConfigProxy.config( config, AbstractBroker.Configuration.class ) );
     }
 
-    protected MasterImpl getMaster()
+    protected TestMaster getMaster()
     {
         return master;
     }

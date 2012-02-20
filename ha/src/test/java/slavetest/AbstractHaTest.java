@@ -23,7 +23,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import static org.neo4j.kernel.HaConfig.CONFIG_KEY_PULL_INTERVAL;
 
@@ -55,8 +54,6 @@ import org.neo4j.helpers.collection.IterableWrapper;
 import org.neo4j.helpers.collection.IteratorUtil;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
-import org.neo4j.kernel.impl.batchinsert.BatchInserter;
-import org.neo4j.kernel.impl.batchinsert.BatchInserterImpl;
 import org.neo4j.kernel.impl.transaction.xaframework.InMemoryLogBuffer;
 import org.neo4j.kernel.impl.transaction.xaframework.LogExtractor;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
@@ -375,6 +372,8 @@ public abstract class AbstractHaTest
 
     protected abstract Fetcher<DoubleLatch> getDoubleLatch() throws Exception;
 
+    protected abstract void createBigMasterStore( int numberOfMegabytes );
+    
     private class Worker extends Thread
     {
         private boolean successfull;
@@ -630,18 +629,6 @@ public abstract class AbstractHaTest
         addDb( MapUtil.stringMap(), true );
         awaitAllStarted();
         executeJob( new CommonJobs.CreateSubRefNodeJob( "whatever", "my_key", "my_value" ), 0 );
-    }
-
-    protected void createBigMasterStore( int numberOfMegabytes )
-    {
-        // Will result in a 500Mb store
-        BatchInserter inserter = new BatchInserterImpl( dbPath( 0 ).getAbsolutePath() );
-        byte[] array = new byte[100000];
-        for ( int i = 0; i < numberOfMegabytes*10; i++ )
-        {
-            inserter.createNode( map( "array", array ) );
-        }
-        inserter.shutdown();
     }
 
     @Test

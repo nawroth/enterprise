@@ -25,23 +25,15 @@ import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.ha.zookeeper.ZooClient;
-import org.neo4j.kernel.impl.nioneo.store.StoreId;
 
 public class FakeMasterBroker extends AbstractBroker
 {
-    private StoreId storeId = new StoreId();
     private ZooClient.Configuration zooClientConfig;
 
     public FakeMasterBroker( Configuration conf, ZooClient.Configuration zooClientConfig )
     {
         super( conf );
         this.zooClientConfig = zooClientConfig;
-    }
-
-    @Override
-    public StoreId getClusterStoreId()
-    {
-        return storeId; // Master will always win
     }
 
     public Machine getMasterMachine()

@@ -23,9 +23,4 @@ import org.neo4j.kernel.CommonFactories.DefaultIdGeneratorFactory;
 
 public class MasterIdGeneratorFactory extends DefaultIdGeneratorFactory
 {
-    @Override
-    public boolean shouldUpdateIdGenerators()
-    {
-        return false;
-    }
 }

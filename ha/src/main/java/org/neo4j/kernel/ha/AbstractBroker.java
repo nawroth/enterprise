@@ -27,6 +27,7 @@ import org.neo4j.kernel.impl.util.StringLogger;
 
 public abstract class AbstractBroker implements Broker
 {
+    private static final StoreId storeId = new StoreId();
     private Configuration config;
 
     @ConfigurationPrefix( "ha." )
@@ -89,7 +90,7 @@ public abstract class AbstractBroker implements Broker
 
     public StoreId getClusterStoreId()
     {
-        throw new UnsupportedOperationException( getClass().getName() );
+        return storeId;
     }
 
     @Override

@@ -80,6 +80,7 @@ import org.neo4j.kernel.impl.core.RelationshipTypeHolder;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
+import org.neo4j.kernel.impl.persistence.PersistenceSource;
 import org.neo4j.kernel.impl.transaction.LockManager;
 import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
 import org.neo4j.kernel.impl.transaction.xaframework.NoSuchLogVersionException;
@@ -187,7 +188,8 @@ public class HighlyAvailableGraphDatabase
             @Override
             public StoreId get()
             {
-                return storeId == null ? localGraph().getStoreId() : storeId;
+                if ( storeId == null ) throw new IllegalStateException( "No store ID" );
+                return storeId;
             }
         };
 
@@ -327,35 +329,35 @@ public class HighlyAvailableGraphDatabase
     // Internal
     private void getFreshDatabaseFromMaster( Pair<Master, Machine> master,
                 boolean branched )
+    {
+        assert master != null;
+        // Assume it's shut down at this point
+        internalShutdown( false );
+        if ( branched )
         {
-            assert master != null;
-            // Assume it's shut down at this point
-            internalShutdown( false );
-            if ( branched )
-            {
-                makeWayForNewDb();
-            }
-
-            Exception exception = null;
-            for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
-            {
-                try
-                {
-                    copyStoreFromMaster( master );
-                    return;
-                }
-                // TODO Maybe catch IOException and treat it more seriously?
-                catch ( Exception e )
-                {
-                    getMessageLog().logMessage( "Problems copying store from master", e );
-                    sleepWithoutInterruption( 1000, "" );
-                    exception = e;
-                    master = broker.getMasterReally( true );
-                    BranchedDataPolicy.keep_none.handle( this );
-                }
-            }
-            throw new RuntimeException( "Gave up trying to copy store from master", exception );
+            makeWayForNewDb();
         }
+
+        Exception exception = null;
+        for ( int i = 0; i < STORE_COPY_RETRIES; i++ )
+        {
+            try
+            {
+                copyStoreFromMaster( master );
+                return;
+            }
+            // TODO Maybe catch IOException and treat it more seriously?
+            catch ( Exception e )
+            {
+                getMessageLog().logMessage( "Problems copying store from master", e );
+                sleepWithoutInterruption( 1000, "" );
+                exception = e;
+                master = broker.getMasterReally( true );
+                BranchedDataPolicy.keep_none.handle( this );
+            }
+        }
+        throw new RuntimeException( "Gave up trying to copy store from master", exception );
+    }
 
     void makeWayForNewDb()
     {
@@ -397,7 +399,7 @@ public class HighlyAvailableGraphDatabase
                 else
                 {   // I seem to be the master, the broker have created the cluster for me
                     // I'm just going to start up now
-                    storeId = broker.getClusterStoreId();
+//                    storeId = broker.getClusterStoreId();
                     break;
                 }
                 // I am not master, and could not connect to the master:
@@ -410,6 +412,8 @@ public class HighlyAvailableGraphDatabase
                 throw new RuntimeException( "Tried to join the cluster, but was unable to", exception );
             }
         }
+        storeId = broker.getClusterStoreId();
+        System.out.println( "Start up storeId:" + storeId );
         newMaster( storeId, new Exception( "Starting up for the first time" ) );
         localGraph();
     }
@@ -1023,7 +1027,7 @@ public class HighlyAvailableGraphDatabase
         return masterServer;
     }
 
-    int getMachineId()
+    protected int getMachineId()
     {
         return machineId;
     }
@@ -1302,5 +1306,11 @@ public class HighlyAvailableGraphDatabase
         {
             return localGraph().getNodeManager();
         }
+    }
+
+    @Override
+    public PersistenceSource getPersistenceSource()
+    {
+        return localGraph().getPersistenceSource();
     }
 }

@@ -81,7 +81,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     }
 
     @Override
-    protected Broker makeSlaveBroker( MasterImpl master, int masterId, int id, HighlyAvailableGraphDatabase db, Map<String, String> config )
+    protected Broker makeSlaveBroker( TestMaster master, int masterId, int id, HighlyAvailableGraphDatabase db, Map<String, String> config )
     {
         config.put( "server_id", Integer.toString( id ) );
         AbstractBroker.Configuration conf = ConfigProxy.config( config, AbstractBroker.Configuration.class );
@@ -314,8 +314,8 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     @Test
     public void halfWayCopyWithSuccessfulRetry() throws Exception
     {
-        createBigMasterStore( 10 );
         startUpMaster( MapUtil.stringMap() );
+        createBigMasterStore( 10 );
         int slaveMachineId = addDb( MapUtil.stringMap(), false );
         awaitAllStarted();
         shutdownDb( slaveMachineId );
@@ -357,8 +357,9 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
 
         // Restart the master
         getMasterHaDb().shutdown();
-        ((PlaceHolderGraphDatabaseService)getMaster().getGraphDb()).setDb(
-                startUpMasterDb( MapUtil.stringMap() ) );
+        HighlyAvailableGraphDatabase newMaster = startUpMasterDb( MapUtil.stringMap() );
+        getMaster().setGraphDb( newMaster );
+        
 
         // Try to commit the tx from the slave and make sure it cannot do that
         slaveTx.success();

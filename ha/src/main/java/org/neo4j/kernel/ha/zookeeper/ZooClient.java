@@ -173,23 +173,22 @@ public class ZooClient extends AbstractZooKeeperManager
     }
 
     protected Pair<Master, Machine> getMasterFromZooKeeper( boolean wait, boolean allowChange )
+    {
+        Machine master = getMasterBasedOn( getAllMachines( wait ).values() );
+        Master masterClient = AbstractZooKeeperManager.NO_MASTER;
+        if ( getCachedMaster().other().getMachineId() != master.getMachineId() )
         {
-            Machine master = getMasterBasedOn( getAllMachines( wait ).values() );
-            Master masterClient = AbstractZooKeeperManager.NO_MASTER;
-            if ( getCachedMaster().other().getMachineId() != master.getMachineId() )
+            invalidateMaster();
+            if ( !allowChange ) return AbstractZooKeeperManager.NO_MASTER_MACHINE_PAIR;
+            if ( master != Machine.NO_MACHINE && master.getMachineId() != getMyMachineId() )
             {
-                invalidateMaster();
-                if ( !allowChange ) return AbstractZooKeeperManager.NO_MASTER_MACHINE_PAIR;
-                if ( master != Machine.NO_MACHINE && master.getMachineId() != getMyMachineId() )
-                {
-                    masterClient = new MasterClient( master.getServer().first(), master.getServer().other(), msgLog, storeIdGetter,
-                            receiver, clientReadTimeout, clientLockReadTimeout, maxConcurrentChannelsPerSlave );
-                }
-                cachedMaster = Pair.<Master, Machine>of( masterClient, master );
+                masterClient = new MasterClient( master.getServer().first(), master.getServer().other(), msgLog, storeIdGetter,
+                        receiver, clientReadTimeout, clientLockReadTimeout, maxConcurrentChannelsPerSlave );
             }
-            return cachedMaster;
+            cachedMaster = Pair.<Master, Machine>of( masterClient, master );
         }
-
+        return cachedMaster;
+    }
 
     private int toInt( byte[] data )
     {
@@ -747,6 +746,7 @@ public class ZooClient extends AbstractZooKeeperManager
 
     public StoreId getClusterStoreId()
     {
+        makeSureRootPathIsFound();
         return storeId;
     }
     
@@ -760,108 +760,108 @@ public class ZooClient extends AbstractZooKeeperManager
 
     private class WatcherImpl
             implements Watcher
+    {
+        public void process( WatchedEvent event )
         {
-            public void process( WatchedEvent event )
+            try
             {
-                try
+                String path = event.getPath();
+                msgLog.logMessage( this + ", " + new Date() + " Got event: " + event + " (path=" + path + ")", true );
+                if ( path == null && event.getState() == Watcher.Event.KeeperState.Expired )
                 {
-                    String path = event.getPath();
-                    msgLog.logMessage( this + ", " + new Date() + " Got event: " + event + " (path=" + path + ")", true );
-                    if ( path == null && event.getState() == Watcher.Event.KeeperState.Expired )
+                    keeperState = KeeperState.Expired;
+                    receiver.reconnect( new Exception() );
+                }
+                else if ( path == null && event.getState() == Watcher.Event.KeeperState.SyncConnected )
+                {
+                    long newSessionId = zooKeeper.getSessionId();
+                    Pair<Master, Machine> masterBeforeIWrite = getMasterFromZooKeeper(
+                            false, false );
+                    msgLog.logMessage( "Get master before write:" + masterBeforeIWrite );
+                    boolean masterBeforeIWriteDiffers = masterBeforeIWrite.other().getMachineId() != getCachedMaster().other().getMachineId();
+                    if ( newSessionId != sessionId || masterBeforeIWriteDiffers )
                     {
-                        keeperState = KeeperState.Expired;
-                        receiver.reconnect( new Exception() );
-                    }
-                    else if ( path == null && event.getState() == Watcher.Event.KeeperState.SyncConnected )
-                    {
-                        long newSessionId = zooKeeper.getSessionId();
-                        Pair<Master, Machine> masterBeforeIWrite = getMasterFromZooKeeper(
-                                false, false );
-                        msgLog.logMessage( "Get master before write:" + masterBeforeIWrite );
-                        boolean masterBeforeIWriteDiffers = masterBeforeIWrite.other().getMachineId() != getCachedMaster().other().getMachineId();
-                        if ( newSessionId != sessionId || masterBeforeIWriteDiffers )
+                        if ( writeLastCommittedTx )
                         {
-                            if ( writeLastCommittedTx )
+                            sequenceNr = setup();
+                            msgLog.logMessage( "Did setup, seq=" + sequenceNr + " new sessionId=" + newSessionId );
+                            Pair<Master, Machine> masterAfterIWrote = getMasterFromZooKeeper(
+                                    false, false );
+                            msgLog.logMessage( "Get master after write:" + masterAfterIWrote );
+                            if ( sessionId != -1 )
                             {
-                                sequenceNr = setup();
-                                msgLog.logMessage( "Did setup, seq=" + sequenceNr + " new sessionId=" + newSessionId );
-                                Pair<Master, Machine> masterAfterIWrote = getMasterFromZooKeeper(
-                                        false, false );
-                                msgLog.logMessage( "Get master after write:" + masterAfterIWrote );
-                                if ( sessionId != -1 )
-                                {
-                                    receiver.newMaster( new Exception( "Got SyncConnected event from ZK" ) );
-                                }
-                                sessionId = newSessionId;
+                                receiver.newMaster( new Exception( "Got SyncConnected event from ZK" ) );
                             }
-                            else
-                            {
-                                msgLog.logMessage( "Didn't do setup due to told not to write" );
-                                keeperState = KeeperState.SyncConnected;
-                                subscribeToDataChangeWatcher( MASTER_REBOUND_CHILD );
-                            }
-                            keeperState = KeeperState.SyncConnected;
+                            sessionId = newSessionId;
                         }
                         else
                         {
-                            msgLog.logMessage( "SyncConnected with same session id: " + sessionId );
+                            msgLog.logMessage( "Didn't do setup due to told not to write" );
                             keeperState = KeeperState.SyncConnected;
+                            subscribeToDataChangeWatcher( MASTER_REBOUND_CHILD );
                         }
+                        keeperState = KeeperState.SyncConnected;
                     }
-                    else if ( path == null && event.getState() == Watcher.Event.KeeperState.Disconnected )
+                    else
                     {
-                        keeperState = KeeperState.Disconnected;
+                        msgLog.logMessage( "SyncConnected with same session id: " + sessionId );
+                        keeperState = KeeperState.SyncConnected;
                     }
-                    else if ( event.getType() == Watcher.Event.EventType.NodeDeleted )
+                }
+                else if ( path == null && event.getState() == Watcher.Event.KeeperState.Disconnected )
+                {
+                    keeperState = KeeperState.Disconnected;
+                }
+                else if ( event.getType() == Watcher.Event.EventType.NodeDeleted )
+                {
+                    msgLog.logMessage( "Got a NodeDeleted event for " + path );
+                    ZooKeeperMachine currentMaster = (ZooKeeperMachine) getCachedMaster().other();
+                    if ( path.contains( currentMaster.getZooKeeperPath() ) )
                     {
-                        msgLog.logMessage( "Got a NodeDeleted event for " + path );
-                        ZooKeeperMachine currentMaster = (ZooKeeperMachine) getCachedMaster().other();
-                        if ( path.contains( currentMaster.getZooKeeperPath() ) )
+                        msgLog.logMessage("Acting on it, calling newMaster()");
+                        receiver.newMaster( new Exception() );
+                    }
+                }
+                else if ( event.getType() == Watcher.Event.EventType.NodeDataChanged )
+                {
+                    int newMasterMachineId = toInt( getZooKeeper( true ).getData( path, true, null ) );
+                    msgLog.logMessage( "Got event data " + newMasterMachineId );
+                    if ( path.contains( MASTER_NOTIFY_CHILD ) )
+                    {
+                        // This event is for the masters eyes only so it should only
+                        // be the (by zookeeper spoken) master which should make sure
+                        // it really is master.
+                        if ( newMasterMachineId == machineId )
                         {
-                            msgLog.logMessage("Acting on it, calling newMaster()");
                             receiver.newMaster( new Exception() );
                         }
                     }
-                    else if ( event.getType() == Watcher.Event.EventType.NodeDataChanged )
+                    else if ( path.contains( MASTER_REBOUND_CHILD ) )
                     {
-                        int newMasterMachineId = toInt( getZooKeeper( true ).getData( path, true, null ) );
-                        msgLog.logMessage( "Got event data " + newMasterMachineId );
-                        if ( path.contains( MASTER_NOTIFY_CHILD ) )
+                        // This event is for all the others after the master got the
+                        // MASTER_NOTIFY_CHILD which then shouts out to the others to
+                        // become slaves if they don't already are.
+                        if ( newMasterMachineId != machineId )
                         {
-                            // This event is for the masters eyes only so it should only
-                            // be the (by zookeeper spoken) master which should make sure
-                            // it really is master.
-                            if ( newMasterMachineId == machineId )
-                            {
-                                receiver.newMaster( new Exception() );
-                            }
-                        }
-                        else if ( path.contains( MASTER_REBOUND_CHILD ) )
-                        {
-                            // This event is for all the others after the master got the
-                            // MASTER_NOTIFY_CHILD which then shouts out to the others to
-                            // become slaves if they don't already are.
-                            if ( newMasterMachineId != machineId )
-                            {
-                                receiver.newMaster( new Exception() );
-                            }
-                        }
-                        else
-                        {
-                            msgLog.logMessage( "Unrecognized data change " + path );
+                            receiver.newMaster( new Exception() );
                         }
                     }
+                    else
+                    {
+                        msgLog.logMessage( "Unrecognized data change " + path );
+                    }
                 }
-                catch ( Exception e )
-                {
-                    msgLog.logMessage( "Error in ZooClient.process", e, true );
-                    e.printStackTrace();
-                    throw Exceptions.launderedException( e );
+            }
+            catch ( Exception e )
+            {
+                msgLog.logMessage( "Error in ZooClient.process", e, true );
+                e.printStackTrace();
+                throw Exceptions.launderedException( e );
             }
                 finally
             {
                     msgLog.flush();
             }
-            }
         }
+    }
 }

@@ -114,7 +114,7 @@ public class StandaloneDatabase
                     @Override
                     protected Broker createBroker()
                     {
-                        if ( machineId == masterId )
+                        if ( getMachineId() == masterId )
                         {
                             ZooClient.Configuration zooConfig = ConfigProxy.config( removeDashes( config ), ZooClient.Configuration.class );
                             AbstractBroker.Configuration brokerConfig = ConfigProxy.config( removeDashes( config ), AbstractBroker.Configuration.class );
@@ -126,7 +126,7 @@ public class StandaloneDatabase
                                     Protocol.PORT, getMessageLog(), storeIdGetter, Client.ConnectionLostHandler.NO_ACTION, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                                     Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                                     Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ),
-                                    masterId, ConfigProxy.config( MapUtil.stringMap( "ha.server_id", Integer.toString( machineId ) ), AbstractBroker.Configuration.class ));
+                                    masterId, ConfigProxy.config( MapUtil.stringMap( "ha.server_id", Integer.toString( getMachineId() ) ), AbstractBroker.Configuration.class ));
                         }
                     }
                 };
