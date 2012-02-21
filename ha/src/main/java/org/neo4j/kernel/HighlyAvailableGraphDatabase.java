@@ -1306,6 +1306,12 @@ public class HighlyAvailableGraphDatabase
         {
             return localGraph().getNodeManager();
         }
+
+        @Override
+        public Node newNodeProxy( long nodeId )
+        {
+            return localGraph().getNodeManager().newNodeProxyById( nodeId );
+        }
     }
 
     @Override
