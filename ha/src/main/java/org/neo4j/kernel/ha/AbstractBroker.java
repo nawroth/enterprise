@@ -27,15 +27,15 @@ import org.neo4j.kernel.impl.util.StringLogger;
 
 public abstract class AbstractBroker implements Broker
 {
-    private static final StoreId storeId = new StoreId();
-    private Configuration config;
-
     @ConfigurationPrefix( "ha." )
     public interface Configuration
     {
         int server_id();
     }
     
+    private static final StoreId storeId = new StoreId();
+    private Configuration config;
+
     public AbstractBroker( Configuration config)
     {
         this.config = config;
@@ -44,6 +44,11 @@ public abstract class AbstractBroker implements Broker
     public void setLastCommittedTxId( long txId )
     {
         // Do nothing
+    }
+    
+    protected Configuration getConfig()
+    {
+        return config;
     }
 
     public int getMyMachineId()
@@ -62,6 +67,16 @@ public abstract class AbstractBroker implements Broker
         // Do nothing
     }
 
+    public void restart()
+    {
+        // Do nothing
+    }
+
+    public void start()
+    {
+        // Do nothing
+    }
+
     public Machine getMasterExceptMyself()
     {
         throw new UnsupportedOperationException();
@@ -71,7 +86,7 @@ public abstract class AbstractBroker implements Broker
     {
         // Do nothing
     }
-    
+
     public void setConnectionInformation( KernelData kernel )
     {
     }

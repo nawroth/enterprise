@@ -259,13 +259,33 @@ public class MasterClient extends Client<Master> implements Master
         }, storeId );
     }
 
-    @SuppressWarnings( "unchecked" )
     public Response<Void> copyStore( SlaveContext context, final StoreWriter writer )
     {
-        context = new SlaveContext( context.getSessionId(), context.machineId(),
-                context.getEventIdentifier(), new Pair[0] );
-
+        context = stripFromTransactions( context );
         return sendRequest( HaRequestType.COPY_STORE, context, EMPTY_SERIALIZER, new Protocol.FileStreamsDeserializer( writer ) );
+    }
+
+    private SlaveContext stripFromTransactions( SlaveContext context )
+    {
+        return new SlaveContext( context.getSessionId(), context.machineId(),
+                context.getEventIdentifier(), new SlaveContext.Tx[0], context.getMasterId(), context.getChecksum() );
+    }
+
+    @Override
+    public Response<Void> copyTransactions( SlaveContext context,
+            final String ds, final long startTxId, final long endTxId )
+    {
+        context = stripFromTransactions( context );
+        return sendRequest( HaRequestType.COPY_TRANSACTIONS, context, new Serializer()
+        {
+            public void write( ChannelBuffer buffer, ByteBuffer readBuffer )
+                    throws IOException
+            {
+                writeString( buffer, ds );
+                buffer.writeLong( startTxId );
+                buffer.writeLong( endTxId );
+            }
+        }, VOID_DESERIALIZER );
     }
 
     public static enum HaRequestType implements RequestType<Master>
@@ -432,6 +452,19 @@ public class MasterClient extends Client<Master> implements Master
                     ChannelBuffer input, final ChannelBuffer target )
             {
                 return master.copyStore( context, new ToNetworkStoreWriter( target ) );
+            }
+
+        }, VOID_SERIALIZER, true ),
+
+        // ====
+        COPY_TRANSACTIONS( new MasterCaller<Master, Void>()
+        {
+            public Response<Void> callMaster( Master master,
+                    SlaveContext context, ChannelBuffer input,
+                    final ChannelBuffer target )
+            {
+                return master.copyTransactions( context, readString( input ),
+                        input.readLong(), input.readLong() );
             }
 
         }, VOID_SERIALIZER, true ),

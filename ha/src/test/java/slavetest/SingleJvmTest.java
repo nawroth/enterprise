@@ -40,6 +40,8 @@ import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.Broker;
+import org.neo4j.kernel.ha.ClusterClient;
+import org.neo4j.kernel.ha.FakeClusterClient;
 import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.FakeSlaveBroker;
 import org.neo4j.kernel.ha.MasterImpl;
@@ -142,6 +144,12 @@ public class SingleJvmTest extends AbstractHaTest
             {
                 return makeSlaveBroker( master, 0, machineId, this, cfg );
             }
+            
+            @Override
+            protected ClusterClient createClusterClient()
+            {
+                return makeMasterClusterClientFromBroker( getBroker() );
+            }
         };
         
         haDbs.set( machineId-1, haGraphDb );
@@ -171,7 +179,7 @@ public class SingleJvmTest extends AbstractHaTest
     {
         final int masterId = 0;
         final Map<String, String> config = MapUtil.stringMap( extraConfig,
-                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ));
+                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ) );
         addDefaultReadTimeout( config );
         String path = dbPath( 0 ).getAbsolutePath();
         HighlyAvailableGraphDatabase haGraphDb = new HighlyAvailableGraphDatabase(
@@ -205,6 +213,11 @@ public class SingleJvmTest extends AbstractHaTest
     protected Broker makeSlaveBroker( TestMaster master, int masterId, int id, HighlyAvailableGraphDatabase graphDb, Map<String, String> config )
     {
         return new FakeSlaveBroker( master, masterId, ConfigProxy.config( config, AbstractBroker.Configuration.class ) );
+    }
+
+    protected ClusterClient makeMasterClusterClientFromBroker( Broker broker )
+    {
+        return new FakeClusterClient( broker );
     }
 
     protected TestMaster getMaster()

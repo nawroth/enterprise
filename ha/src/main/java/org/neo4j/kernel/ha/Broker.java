@@ -49,6 +49,10 @@ public interface Broker
 
     void shutdown();
 
+    void restart();
+
+    void start();
+
     void setConnectionInformation( KernelData kernel );
 
     ConnectionInformation getConnectionInformation( int machineId );

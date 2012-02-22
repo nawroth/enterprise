@@ -33,11 +33,13 @@ import static org.neo4j.kernel.HaConfig.CONFIG_KEY_READ_TIMEOUT;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.rmi.RemoteException;
 import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.neo4j.com.Client;
@@ -52,7 +54,6 @@ import org.neo4j.graphdb.TransactionFailureException;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.collection.IteratorUtil;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.Config;
 import org.neo4j.kernel.ConfigProxy;
 import org.neo4j.kernel.GraphDatabaseSPI;
@@ -62,6 +63,7 @@ import org.neo4j.kernel.ha.Broker;
 import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.ha.MasterClient;
 import org.neo4j.kernel.ha.MasterImpl;
+import org.neo4j.kernel.ha.zookeeper.AbstractZooKeeperManager;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.transaction.LockType;
@@ -71,6 +73,14 @@ import org.neo4j.kernel.impl.util.StringLogger;
 
 public class SingleJvmWithNettyTest extends SingleJvmTest
 {
+    private volatile Pair<Master, Machine> cachedMasterOverride;
+
+    @Before
+    public void setUp()
+    {
+        cachedMasterOverride = null;
+    }
+
     @Test
     public void assertThatNettyIsUsed() throws Exception
     {
@@ -106,10 +116,16 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
 
             public Pair<Master, Machine> getMasterReally( boolean allowChange )
             {
-                return getMaster();
+                if ( allowChange ) cachedMasterOverride = null;
+                return getMasterPair();
             }
 
             public Pair<Master, Machine> getMaster()
+            {
+                return cachedMasterOverride != null ? cachedMasterOverride : getMasterPair();
+            }
+
+            private Pair<Master, Machine> getMasterPair()
             {
                 return Pair.of( client, masterMachine );
             }
@@ -172,7 +188,14 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         t1.join();
         t2.join();
 
-        assertEquals( 2, countOccurences( "Opened a new channel", new File( dbPath( 1 ), StringLogger.DEFAULT_NAME ) ) );
+        /*
+         * We might get 2, we might get 3 new channels, depending on the race between one thread releasing
+         * and the other acquiring (if the first wins we get 2, if the second 3). Anyways, it must be more than 1.
+         */
+        assertTrue(
+                "Did not get enough \"Opened a new channel\" log statements, something went missing",
+                countOccurences( "Opened a new channel", new File(
+                dbPath( 1 ), StringLogger.DEFAULT_NAME ) ) > 1 );
     }
 
     private int countOccurences( String string, File file ) throws Exception
@@ -525,10 +548,10 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     @Test
     public void readLockWithoutTxOnSlaveShouldNotGrabIndefiniteLockOnMaster() throws Exception
     {
-        final long lockTimeout = 2;
+        final long lockTimeout = 1;
         initializeDbs( 1, stringMap( CONFIG_KEY_LOCK_READ_TIMEOUT, String.valueOf( lockTimeout ) ) );
-        final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         final long[] id = new long[1];
+        final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         Thread lockHolder = new Thread( new Runnable()
         {
             @Override
@@ -549,8 +572,8 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
                     {
                         tx.finish();
                     }
-                    ( (AbstractGraphDatabase) slaveDb ).getLockManager().getReadLock( node );
-                    ( (AbstractGraphDatabase) slaveDb ).getLockReleaser().addLockToTransaction( node, LockType.READ );
+                    ( (GraphDatabaseSPI) slaveDb ).getLockManager().getReadLock( node );
+                    ( (GraphDatabaseSPI) slaveDb ).getLockReleaser().addLockToTransaction( node, LockType.READ );
                     id[0] = node.getId();
                     latch.countDownFirst();
                     latch.awaitSecond();
@@ -559,6 +582,18 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
                 {
                     throw new RuntimeException( e );
                 }
+                finally
+                {
+                    try
+                    {
+                        latch.countDownFirst();
+                        latch.awaitSecond();
+                    }
+                    catch ( RemoteException e )
+                    {
+                        e.printStackTrace();
+                    }
+                }
             }
         }, "slaveLockHolder" );
         lockHolder.start();
@@ -566,7 +601,8 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         latch.awaitFirst();
         final HighlyAvailableGraphDatabase masterDb = getMasterHaDb();
         final Transaction tx = masterDb.beginTx();
-        try {
+        try
+        {
             long startTime = System.currentTimeMillis();
             masterDb.getNodeById(id[0]).setProperty( "name", "David" );
             long duration = System.currentTimeMillis() - startTime;
@@ -602,6 +638,37 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
 
         assertEquals( node, getSlave( 0 ).index().forNodes( index ).get( key, value ).getSingle().getId() );
         assertEquals( node, getSlave( 1 ).index().forNodes( index ).get( key, value ).getSingle().getId() );
+
+        t1.shutdown();
+        t2.shutdown();
+    }
+
+    @Test
+    public void pullUpdatesDoesNewMasterWhenThereIsNoMaster() throws Exception
+    {
+        disableVerificationAfterTest();
+        initializeDbs( 2 );
+        executeJob( new CommonJobs.CreateNodeJob( true ), 0 );
+
+        cachedMasterOverride = AbstractZooKeeperManager.NO_MASTER_MACHINE_PAIR;
+        getMaster().shutdown();
+        int exceptionCount = 0;
+        for ( int i = 0; i < 3; i++ )
+        {
+            try
+            {
+                pullUpdates( 1 );
+            }
+            catch ( Exception e )
+            {
+                exceptionCount++;
+                e.printStackTrace();
+            }
+        }
+        if (exceptionCount > 1)
+        {
+            fail( "Should not have gotten more than one failed pullUpdates during master switch." );
+        }
     }
 
     private Pair<Integer, Integer> getTransactionCounts( GraphDatabaseSPI master )

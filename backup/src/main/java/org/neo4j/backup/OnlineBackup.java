@@ -19,11 +19,16 @@
  */
 package org.neo4j.backup;
 
+import static org.neo4j.com.SlaveContext.lastAppliedTx;
+
 import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -34,18 +39,18 @@ import org.neo4j.com.MasterUtil;
 import org.neo4j.com.MasterUtil.TxHandler;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.SlaveContext.Tx;
+import org.neo4j.com.StoreWriter;
 import org.neo4j.com.ToFileStoreWriter;
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.helpers.Pair;
-import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
+import org.neo4j.com.TxExtractor;
+import org.neo4j.helpers.ProgressIndicator;
+import org.neo4j.helpers.Triplet;
+import org.neo4j.kernel.ConfigParam;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
 import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreAccess;
 import org.neo4j.kernel.impl.transaction.XaDataSourceManager;
-import org.neo4j.kernel.impl.transaction.xaframework.TransactionInterceptorProvider;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 import org.neo4j.kernel.impl.util.StringLogger;
 
@@ -87,7 +92,8 @@ public class OnlineBackup
         long timestamp = System.currentTimeMillis();
         try
         {
-            Response<Void> response = client.fullBackup( new ToFileStoreWriter( targetDirectory ) );
+            Response<Void> response = client.fullBackup( decorateWithProgressIndicator(
+                    new ToFileStoreWriter( targetDirectory ) ) );
             GraphDatabaseSPI targetDb = startTemporaryDb( targetDirectory,
                     VerificationLevel.NONE /* run full check instead */ );
             try
@@ -120,6 +126,31 @@ public class OnlineBackup
         return this;
     }
 
+    private StoreWriter decorateWithProgressIndicator( final StoreWriter actual )
+    {
+        return new StoreWriter()
+        {
+            private final ProgressIndicator progress = new ProgressIndicator.UnknownEndProgress( 1, "Files copied" );
+            private int totalFiles;
+            
+            @Override
+            public void write( String path, ReadableByteChannel data, ByteBuffer temporaryBuffer,
+                    boolean hasData ) throws IOException
+            {
+                actual.write( path, data, temporaryBuffer, hasData );
+                progress.update( true, 1 );
+                totalFiles++;
+            }
+            
+            @Override
+            public void done()
+            {
+                actual.done();
+                progress.done( totalFiles );
+            }
+        };
+    }
+
     static boolean directoryContainsDb( String targetDirectory )
     {
         return new File( targetDirectory, NeoStore.DEFAULT_NAME ).exists();
@@ -140,13 +171,13 @@ public class OnlineBackup
         return Collections.unmodifiableMap( lastCommittedTxs );
     }
 
-    static EmbeddedGraphDatabase startTemporaryDb( String targetDirectory, VerificationLevel verification )
+    static EmbeddedGraphDatabase startTemporaryDb( String targetDirectory, ConfigParam... params )
     {
-        if ( verification != VerificationLevel.NONE ) {
-            return new EmbeddedGraphDatabase( targetDirectory, MapUtil.stringMap(
-                            Config.INTERCEPT_DESERIALIZED_TRANSACTIONS, "true",
-                            TransactionInterceptorProvider.class.getSimpleName()
-                            +"."+verification.interceptorName, verification.configValue ) );
+        if (params != null && params.length > 0) {
+            Map<String,String> config = new HashMap<String, String>();
+            for ( ConfigParam param : params )
+                if ( param != null ) param.configure( config );
+            return new EmbeddedGraphDatabase( targetDirectory, config );
         }
         else
             return new EmbeddedGraphDatabase( targetDirectory );
@@ -194,7 +225,8 @@ public class OnlineBackup
                 Client.storeIdGetterForDb( targetDb ) );
         try
         {
-            unpackResponse( client.incrementalBackup( slaveContextOf( targetDb ) ), targetDb, MasterUtil.NO_ACTION );
+            unpackResponse( client.incrementalBackup( slaveContextOf( targetDb ) ), targetDb,
+                    new ProgressTxHandler() );
         }
         finally
         {
@@ -224,17 +256,15 @@ public class OnlineBackup
         }
     }
 
-    @SuppressWarnings( "unchecked" )
-    private SlaveContext slaveContextOf( GraphDatabaseService graphDb )
+    private SlaveContext slaveContextOf( GraphDatabaseSPI graphDb )
     {
-        XaDataSourceManager dsManager =
-                ((AbstractGraphDatabase) graphDb).getXaDataSourceManager();
-        List<Pair<String, Long>> txs = new ArrayList<Pair<String,Long>>();
+        XaDataSourceManager dsManager = graphDb.getXaDataSourceManager();
+        List<Tx> txs = new ArrayList<Tx>();
         for ( XaDataSource ds : dsManager.getAllRegisteredDataSources() )
         {
-            txs.add( Pair.of( ds.getName(), ds.getLastCommittedTxId() ) );
+            txs.add( lastAppliedTx( ds.getName(), ds.getLastCommittedTxId() ) );
         }
-        return SlaveContext.anonymous( txs.toArray( new Pair[0] ) );
+        return SlaveContext.anonymous( txs.toArray( new Tx[0] ) );
     }
 
     private static boolean bumpLogFile( String targetDirectory, long toTimestamp )
@@ -266,5 +296,24 @@ public class OnlineBackup
         File to = new File( previous.getParentFile(), StringLogger.DEFAULT_NAME
                                                       + "." + toTimestamp );
         return previous.renameTo( to );
+    }
+    
+    private static class ProgressTxHandler implements TxHandler
+    {
+        private final ProgressIndicator progress = new ProgressIndicator.UnknownEndProgress( 1000, "Transactions applied" );
+        private long count;
+        
+        @Override
+        public void accept( Triplet<String, Long, TxExtractor> tx, XaDataSource dataSource )
+        {
+            progress.update( true, 1 );
+            count++;
+        }
+        
+        @Override
+        public void done()
+        {
+            progress.done( count );
+        }
     }
 }

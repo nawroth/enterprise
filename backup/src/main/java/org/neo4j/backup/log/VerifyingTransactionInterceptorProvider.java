@@ -19,6 +19,9 @@
  */
 package org.neo4j.backup.log;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.neo4j.graphdb.DependencyResolver;
 import org.neo4j.helpers.Service;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
@@ -52,13 +55,19 @@ public class VerifyingTransactionInterceptorProvider extends
         {
             return null;
         }
-        String config = (String) options;
-        if ( !"true".equalsIgnoreCase( config ) )
+        String[] config = ((String) options).split( ";" );
+        if ( !"true".equalsIgnoreCase( config[0] ) )
         {
             return null;
         }
+        Map<String, String> extra = new HashMap<String, String>();
+        for ( int i = 1; i < config.length; i++ )
+        {
+            String[] parts = config[i].split( "=", 2 );
+            extra.put( parts[0].toLowerCase(), parts.length == 1 ? "true" : parts[1] );
+        }
         return new VerifyingTransactionInterceptor( (NeoStoreXaDataSource) ds, dependencyResolver.resolveDependency( StringLogger.class ),
-                VerifyingTransactionInterceptor.CheckerMode.DIFF, true );
+                VerifyingTransactionInterceptor.CheckerMode.DIFF, true, extra );
     }
 
     @Override

@@ -19,24 +19,41 @@
  */
 package org.neo4j.backup;
 
+import static org.neo4j.helpers.ProgressIndicator.SimpleProgress.textual;
 import static org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource.LOGICAL_LOG_DEFAULT_NAME;
 import static org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.getHighestHistoryLogVersion;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
+import java.util.Map;
+
+import javax.transaction.xa.Xid;
 
 import org.neo4j.backup.check.ConsistencyCheck;
 import org.neo4j.helpers.Args;
+import org.neo4j.helpers.ProgressIndicator;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.Config;
+import org.neo4j.kernel.ConfigParam;
 import org.neo4j.kernel.impl.nioneo.store.StoreAccess;
+import org.neo4j.kernel.impl.nioneo.xa.Command;
 import org.neo4j.kernel.impl.transaction.xaframework.InMemoryLogBuffer;
+import org.neo4j.kernel.impl.transaction.xaframework.LogEntry;
 import org.neo4j.kernel.impl.transaction.xaframework.LogExtractor;
+import org.neo4j.kernel.impl.transaction.xaframework.LogIoUtils;
+import org.neo4j.kernel.impl.transaction.xaframework.XaCommand;
+import org.neo4j.kernel.impl.transaction.xaframework.XaCommandFactory;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 
 class RebuildFromLogs
 {
+    /*
+     * TODO: This process can be sped up if the target db doesn't have to write tx logs.
+     */
     private final XaDataSource nioneo;
     private final StoreAccess stores;
 
@@ -46,17 +63,18 @@ class RebuildFromLogs
         this.stores = new StoreAccess( graphdb );
     }
 
-    RebuildFromLogs applyTransactionsFrom( File sourceDir ) throws IOException
+    RebuildFromLogs applyTransactionsFrom( ProgressIndicator progress, File sourceDir ) throws IOException
     {
         LogExtractor extractor = null;
         try
         {
-            extractor = LogExtractor.from( sourceDir.getAbsolutePath(), 2 );
+            extractor = LogExtractor.from( sourceDir.getAbsolutePath() );
             for ( InMemoryLogBuffer buffer = new InMemoryLogBuffer();; buffer.reset() )
             {
                 long txId = extractor.extractNext( buffer );
                 if ( txId == -1 ) break;
                 applyTransaction( txId, buffer );
+                if ( progress != null ) progress.update( false, txId );
             }
         }
         finally
@@ -86,11 +104,13 @@ class RebuildFromLogs
             return;
         }
         Args params = new Args( args );
+        @SuppressWarnings( "boxing" )
         boolean full = params.getBoolean( "full", false, true );
         args = params.orphans().toArray( new String[0] );
         if ( args.length != 2 )
         {
-            printUsage( "Exactly two positional arguments expected: <source dir with logs> <target dir for graphdb>" );
+            printUsage( "Exactly two positional arguments expected: "
+                        + "<source dir with logs> <target dir for graphdb>, got " + args.length );
             System.exit( -1 );
             return;
         }
@@ -123,19 +143,39 @@ class RebuildFromLogs
                 return;
             }
         }
-        if ( findMaxLogFileId( source ) < 0 )
+        long maxFileId = findMaxLogFileId( source );
+        if ( maxFileId < 0 )
         {
             printUsage( "Inconsistent number of log files found in " + source );
             System.exit( -1 );
             return;
         }
-        AbstractGraphDatabase graphdb = OnlineBackup.startTemporaryDb(
-                target.getAbsolutePath(), full ? VerificationLevel.FULL_WITH_LOGGING : VerificationLevel.LOGGING );
+        long txCount = findLastTransactionId( source, LOGICAL_LOG_DEFAULT_NAME + ".v" + maxFileId );
+        String txdifflog = params.get( "txdifflog", null, new File( target, "txdiff.log" ).getAbsolutePath() );
+        AbstractGraphDatabase graphdb = OnlineBackup.startTemporaryDb( target.getAbsolutePath(),
+                                                                       new TxDiffLogConfig( full
+                                                                               ? VerificationLevel.FULL_WITH_LOGGING
+                                                                               : VerificationLevel.LOGGING, txdifflog ) );
+
+        ProgressIndicator progress;
+        if ( txCount < 0 )
+        {
+            progress = null;
+            System.err.println( "Unable to report progress, cannot find highest txId, attempting rebuild anyhow." );
+        }
+        else
+        {
+            progress = textual( System.err, txCount );
+            System.err.printf( "Rebuilding store from %s transactions %n", Long.valueOf( txCount ) );
+        }
         try
         {
             try
             {
-                new RebuildFromLogs( graphdb ).applyTransactionsFrom( source ).fullCheck(!full);
+                RebuildFromLogs rebuilder = new RebuildFromLogs( graphdb ).applyTransactionsFrom( progress, source );
+                if ( progress != null ) progress.done( txCount );
+                // if we didn't run the full checker for each transaction, run it afterwards
+                if ( !full ) rebuilder.checkConsistency();
             }
             finally
             {
@@ -151,18 +191,46 @@ class RebuildFromLogs
         }
     }
 
-    private void fullCheck( boolean full )
+    private static long findLastTransactionId( File storeDir, String logFileName )
     {
-        if ( full )
+        long txId;
+        try
         {
+            FileChannel channel = new RandomAccessFile( new File( storeDir, logFileName ), "r" ).getChannel();
             try
             {
-                ConsistencyCheck.run( stores, true );
+                ByteBuffer buffer = ByteBuffer.allocateDirect( 9 + Xid.MAXGTRIDSIZE + Xid.MAXBQUALSIZE * 10 );
+                txId = LogIoUtils.readLogHeader( buffer, channel, true )[1];
+                XaCommandFactory cf = new CommandFactory();
+                for ( LogEntry entry; ( entry = LogIoUtils.readEntry( buffer, channel, cf ) ) != null; )
+                {
+                    if ( entry instanceof LogEntry.Commit )
+                    {
+                        txId = ( (LogEntry.Commit) entry ).getTxId();
+                    }
+                }
             }
-            catch ( AssertionError summary )
+            finally
             {
-                System.err.println( summary.getMessage() );
+                if ( channel != null ) channel.close();
             }
+        }
+        catch ( IOException e )
+        {
+            return -1;
+        }
+        return txId;
+    }
+
+    private void checkConsistency()
+    {
+        try
+        {
+            ConsistencyCheck.run( stores, true );
+        }
+        catch ( AssertionError summary )
+        {
+            System.err.println( summary.getMessage() );
         }
     }
 
@@ -178,5 +246,39 @@ class RebuildFromLogs
     private static long findMaxLogFileId( File source )
     {
         return getHighestHistoryLogVersion( source, LOGICAL_LOG_DEFAULT_NAME );
+    }
+
+    private static class TxDiffLogConfig implements ConfigParam
+    {
+        private final String targetFile;
+        private final VerificationLevel level;
+
+        TxDiffLogConfig( VerificationLevel level, String targetFile )
+        {
+            this.level = level;
+            this.targetFile = targetFile;
+        }
+
+        @Override
+        public void configure( Map<String, String> config )
+        {
+            if ( targetFile != null )
+            {
+                level.configureWithDiffLog( config, targetFile );
+            }
+            else
+            {
+                level.configure( config );
+            }
+        }
+    }
+
+    private static class CommandFactory extends XaCommandFactory
+    {
+        @Override
+        public XaCommand readCommand( ReadableByteChannel byteChannel, ByteBuffer buffer ) throws IOException
+        {
+            return Command.readCommand( null, byteChannel, buffer );
+        }
     }
 }

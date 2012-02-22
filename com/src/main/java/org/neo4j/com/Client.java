@@ -43,9 +43,9 @@ import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.jboss.netty.channel.Channels;
 import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 import org.jboss.netty.handler.queue.BlockingReadHandler;
+import org.neo4j.com.SlaveContext.Tx;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Exceptions;
-import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Triplet;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
@@ -75,6 +75,7 @@ public abstract class Client<M> implements ChannelPipelineFactory
     private final int readTimeout;
     private final byte applicationProtocolVersion;
     private final StoreIdGetter storeIdGetter;
+    private final ResourceReleaser resourcePoolReleaser;
 
     public Client( String hostNameOrIp, int port, StringLogger logger,
             StoreIdGetter storeIdGetter, int frameLength,
@@ -109,8 +110,8 @@ public abstract class Client<M> implements ChannelPipelineFactory
                 if ( channelFuture.isSuccess() )
                 {
                     channel = Triplet.of( channelFuture.getChannel(),
-                                          ChannelBuffers.dynamicBuffer(),
-                                          ByteBuffer.allocateDirect( 1024 * 1024 ) );
+                            ChannelBuffers.dynamicBuffer(),
+                            ByteBuffer.allocateDirect( 1024 * 1024 ) );
                     msgLog.logMessage( "Opened a new channel to " + address, true );
                     return channel;
                 }
@@ -120,24 +121,26 @@ public abstract class Client<M> implements ChannelPipelineFactory
                 ComException exception = new ComException( msg );
                 try
                 {
-                    Thread.sleep( 5000 );
+                    Thread.sleep( 1000 );
                 }
                 catch ( InterruptedException e )
                 {
                     msgLog.logMessage( "Interrupted", e );
                 }
-                connectionLostHandler.handle( exception );
+                // connectionLostHandler.handle( exception );
                 throw exception;
             }
 
             @Override
-            protected boolean isAlive( Triplet<Channel, ChannelBuffer, ByteBuffer> resource )
+            protected boolean isAlive(
+                    Triplet<Channel, ChannelBuffer, ByteBuffer> resource )
             {
                 return resource.first().isConnected();
             }
 
             @Override
-            protected void dispose( Triplet<Channel, ChannelBuffer, ByteBuffer> resource )
+            protected void dispose(
+                    Triplet<Channel, ChannelBuffer, ByteBuffer> resource )
             {
                 Channel channel = resource.first();
                 if ( channel.isConnected() ) channel.close();
@@ -148,6 +151,20 @@ public abstract class Client<M> implements ChannelPipelineFactory
         executor = Executors.newCachedThreadPool();
         bootstrap = new ClientBootstrap( new NioClientSocketChannelFactory( executor, executor ) );
         bootstrap.setPipelineFactory( this );
+        /*
+         * This is here to couple the channel releasing to Response.close() itself and not
+         * to TransactionStream.close() as it is implemented here. The reason is that a Response
+         * that is returned without a TransactionStream will still hold the channel and should
+         * release it eventually. Also, logically, closing the channel is not dependent on the
+         * TransactionStream.
+         */
+        resourcePoolReleaser = new ResourceReleaser()
+        {
+            public void release()
+            {
+                channelPool.release();
+            }
+        };
         msgLog.logMessage( getClass().getSimpleName() + " communication started and bound to " + hostNameOrIp + ":" + port, true );
     }
 
@@ -168,6 +185,7 @@ public abstract class Client<M> implements ChannelPipelineFactory
     protected <R> Response<R> sendRequest( RequestType<M> type, SlaveContext context,
             Serializer serializer, Deserializer<R> deserializer, StoreId specificStoreId )
     {
+        boolean success = true;
         Triplet<Channel, ChannelBuffer, ByteBuffer> channelContext = null;
         try
         {
@@ -175,7 +193,6 @@ public abstract class Client<M> implements ChannelPipelineFactory
             channelContext = getChannel( type );
             Channel channel = channelContext.first();
             channelContext.second().clear();
-
             ChunkingChannelBuffer chunkingBuffer = new ChunkingChannelBuffer( channelContext.second(),
                     channel, frameLength, getInternalProtocolVersion(), applicationProtocolVersion );
             chunkingBuffer.writeByte( type.id() );
@@ -198,11 +215,14 @@ public abstract class Client<M> implements ChannelPipelineFactory
                 if ( specificStoreId != null ) assertCorrectStoreId( storeId, specificStoreId );
                 else assertCorrectStoreId( storeId, getMyStoreId() );
             }
-            TransactionStream txStreams = readTransactionStreams( dechunkingBuffer );
-            return new Response<R>( response, storeId, txStreams );
+            TransactionStream txStreams = readTransactionStreams(
+                    dechunkingBuffer, channelPool );
+            return new Response<R>( response, storeId, txStreams,
+                    resourcePoolReleaser );
         }
         catch ( Throwable e )
         {
+            success = false;
             if ( channelContext != null )
             {
                 closeChannel( channelContext );
@@ -211,7 +231,13 @@ public abstract class Client<M> implements ChannelPipelineFactory
         }
         finally
         {
-            releaseChannel( type, channelContext );
+            /*
+             * Otherwise the user must call response.close() to prevent resource leaks.
+             */
+            if ( !success )
+            {
+                releaseChannel( type, channelContext );
+            }
         }
     }
 
@@ -253,13 +279,15 @@ public abstract class Client<M> implements ChannelPipelineFactory
         targetBuffer.writeLong( context.getSessionId() );
         targetBuffer.writeInt( context.machineId() );
         targetBuffer.writeInt( context.getEventIdentifier() );
-        Pair<String, Long>[] txs = context.lastAppliedTransactions();
+        Tx[] txs = context.lastAppliedTransactions();
         targetBuffer.writeByte( txs.length );
-        for ( Pair<String, Long> tx : txs )
+        for ( Tx tx : txs )
         {
-            writeString( targetBuffer, tx.first() );
-            targetBuffer.writeLong( tx.other() );
+            writeString( targetBuffer, tx.getDataSourceName() );
+            targetBuffer.writeLong( tx.getTxId() );
         }
+        targetBuffer.writeInt( context.getMasterId() );
+        targetBuffer.writeLong( context.getChecksum() );
     }
 
     private Triplet<Channel, ChannelBuffer, ByteBuffer> getChannel( RequestType<M> type ) throws Exception
@@ -309,9 +337,12 @@ public abstract class Client<M> implements ChannelPipelineFactory
         return getClass().getSimpleName() + "[" + address + "]";
     }
 
-    protected static TransactionStream readTransactionStreams( final ChannelBuffer buffer )
+    protected static TransactionStream readTransactionStreams(
+            final ChannelBuffer buffer,
+            final ResourcePool<Triplet<Channel, ChannelBuffer, ByteBuffer>> resourcePool )
     {
         final String[] datasources = readTransactionStreamHeader( buffer );
+
         if ( datasources.length == 1 )
         {
             return TransactionStream.EMPTY;

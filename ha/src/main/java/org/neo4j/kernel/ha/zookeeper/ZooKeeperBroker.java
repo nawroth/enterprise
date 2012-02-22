@@ -37,6 +37,7 @@ import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.ConnectionInformation;
 import org.neo4j.kernel.ha.Master;
+import org.neo4j.kernel.ha.shell.ZooClientFactory;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.management.Neo4jManager;
@@ -50,14 +51,16 @@ public class ZooKeeperBroker extends AbstractBroker
         int coordinator_fetch_info_timeout( int def );
     }
     
-    private final ZooClient zooClient;
+    private final ZooClientFactory zooClientFactory;
+    private volatile ZooClient zooClient;
     private int fetchInfoTimeout;
 
-    public ZooKeeperBroker( Configuration conf, ZooClient zooClient )
+    public ZooKeeperBroker( Configuration conf, ZooClientFactory zooClientFactory )
     {
         super( conf );
+        this.zooClientFactory = zooClientFactory;
         fetchInfoTimeout = conf.coordinator_fetch_info_timeout(HaConfig.CONFIG_DEFAULT_COORDINATOR_FETCH_INFO_TIMEOUT);
-        this.zooClient = zooClient;
+        start();
     }
 
     @Override
@@ -209,9 +212,32 @@ public class ZooKeeperBroker extends AbstractBroker
     }
 
     @Override
-    public void shutdown()
+    public synchronized void start()
     {
+        if ( zooClient != null )
+        {
+            throw new IllegalStateException(
+                    "Broker already started, ZooClient is " + zooClient );
+        }
+        this.zooClient = zooClientFactory.newZooClient();
+    }
+
+    @Override
+    public synchronized void shutdown()
+    {
+        if (zooClient == null)
+        {
+            throw new IllegalStateException( "Broker already shutdown" );
+        }
         zooClient.shutdown();
+        zooClient = null;
+    }
+
+    @Override
+    public synchronized void restart()
+    {
+        shutdown();
+        start();
     }
 
     @Override

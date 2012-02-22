@@ -48,7 +48,6 @@ import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.SlaveUpdateMode;
 import org.neo4j.kernel.ha.ConnectionInformation;
 import org.neo4j.kernel.ha.Master;
-import org.neo4j.kernel.ha.MasterClient;
 import org.neo4j.kernel.ha.MasterImpl;
 import org.neo4j.kernel.ha.MasterServer;
 import org.neo4j.kernel.ha.ResponseReceiver;
@@ -79,6 +78,8 @@ public class ZooClient extends AbstractZooKeeperManager
         String cluster_name( String def );
 
         boolean allow_init_cluster( boolean def );
+        
+        int zk_session_timeout( int def );
     }
     
     static final String MASTER_NOTIFY_CHILD = "master-notify";
@@ -113,10 +114,11 @@ public class ZooClient extends AbstractZooKeeperManager
     public ZooClient( String storeDir, StringLogger stringLogger, StoreIdGetter storeIdGetter, Configuration conf, ResponseReceiver receiver )
     {
         super( conf.coordinators(),
-            stringLogger,
+            storeIdGetter, stringLogger,
             conf.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ),
             conf.lock_read_timeout( conf.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) ),
-            conf.max_concurrent_channels_per_slave( Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ));
+            conf.max_concurrent_channels_per_slave( Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ),
+            conf.zk_session_timeout( HaConfig.CONFIG_DEFAULT_ZK_SESSION_TIMEOUT ));
         this.storeDir = storeDir;
         this.storeIdGetter = storeIdGetter;
         this.conf = conf;
@@ -131,7 +133,7 @@ public class ZooClient extends AbstractZooKeeperManager
 
         try
         {
-            zooKeeper = new ZooKeeper( getServers(), SESSION_TIME_OUT, new WatcherImpl() );
+            zooKeeper = new ZooKeeper( getServers(), getSessionTimeout(), new WatcherImpl() );
         }
         catch ( IOException e )
         {
@@ -163,31 +165,14 @@ public class ZooClient extends AbstractZooKeeperManager
     {
         int timeOut = conf.lock_read_timeout( conf.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) );
         return new MasterServer( new MasterImpl( graphDb, timeOut ),
-                                                Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog(),
-                                                clientLockReadTimeout );
+                Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog(),
+                conf.max_concurrent_channels_per_slave( Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ),
+                clientLockReadTimeout, new BranchDetectingTxVerifier( graphDb ) );
     }
 
     protected int getMyMachineId()
     {
         return this.machineId;
-    }
-
-    protected Pair<Master, Machine> getMasterFromZooKeeper( boolean wait, boolean allowChange )
-    {
-        Machine master = getMasterBasedOn( getAllMachines( wait ).values() );
-        Master masterClient = AbstractZooKeeperManager.NO_MASTER;
-        if ( getCachedMaster().other().getMachineId() != master.getMachineId() )
-        {
-            invalidateMaster();
-            if ( !allowChange ) return AbstractZooKeeperManager.NO_MASTER_MACHINE_PAIR;
-            if ( master != Machine.NO_MACHINE && master.getMachineId() != getMyMachineId() )
-            {
-                masterClient = new MasterClient( master.getServer().first(), master.getServer().other(), msgLog, storeIdGetter,
-                        receiver, clientReadTimeout, clientLockReadTimeout, maxConcurrentChannelsPerSlave );
-            }
-            cachedMaster = Pair.<Master, Machine>of( masterClient, master );
-        }
-        return cachedMaster;
     }
 
     private int toInt( byte[] data )
@@ -230,7 +215,7 @@ public class ZooClient extends AbstractZooKeeperManager
                 }
                 currentTime = System.currentTimeMillis();
             }
-            while ( (currentTime - startTime) < SESSION_TIME_OUT );
+            while ( ( currentTime - startTime ) < getSessionTimeout() );
 
             if ( keeperState != KeeperState.SyncConnected )
             {
@@ -695,6 +680,11 @@ public class ZooClient extends AbstractZooKeeperManager
         super.shutdown();
     }
 
+    public boolean isShutdown()
+    {
+        return shutdown;
+    }
+
     @Override
     public ZooKeeper getZooKeeper( boolean sync )
     {
@@ -749,7 +739,7 @@ public class ZooClient extends AbstractZooKeeperManager
         makeSureRootPathIsFound();
         return storeId;
     }
-    
+
     @Override
     public String toString()
     {

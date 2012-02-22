@@ -150,4 +150,11 @@ class TestMaster implements Master
     {
         return actual.acquireIndexReadLock( context, index, key );
     }
+
+    @Override
+    public Response<Void> copyTransactions( SlaveContext context, String dsName, long startTxId,
+            long endTxId )
+    {
+        return actual.copyTransactions( context, dsName, startTxId, endTxId );
+    }
 }
