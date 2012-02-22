@@ -190,6 +190,12 @@ public class SingleJvmTest extends AbstractHaTest
             {
                 return makeMasterBroker( masterId, this, config );
             }
+            
+            @Override
+            protected ClusterClient createClusterClient()
+            {
+                return makeMasterClusterClientFromBroker( getBroker() );
+            }
         };
         return haGraphDb;
     }
