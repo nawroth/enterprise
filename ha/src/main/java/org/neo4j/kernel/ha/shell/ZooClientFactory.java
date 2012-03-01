@@ -17,13 +17,11 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.kernel.ha;
+package org.neo4j.kernel.ha.shell;
 
-import java.util.Map;
+import org.neo4j.kernel.ha.zookeeper.ZooClient;
 
-import org.neo4j.kernel.AbstractGraphDatabase;
-
-public interface BrokerFactory
+public interface ZooClientFactory
 {
-    Broker create( AbstractGraphDatabase graphDb, Map<String, String> graphDbConfig );
+    ZooClient newZooClient();
 }
