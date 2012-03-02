@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,10 +19,11 @@
  */
 package org.neo4j.kernel.ha;
 
+import static java.util.Collections.synchronizedMap;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -40,18 +41,17 @@ import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
 import org.neo4j.com.StoreWriter;
 import org.neo4j.com.TxExtractor;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.PropertyContainer;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.helpers.Exceptions;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Predicate;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.DeadlockDetectedException;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.IdType;
 import org.neo4j.kernel.impl.core.LockReleaser;
+import org.neo4j.kernel.impl.core.NodeManager;
 import org.neo4j.kernel.impl.nioneo.store.IdGenerator;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.transaction.IllegalResourceException;
@@ -68,18 +68,20 @@ import org.neo4j.kernel.impl.util.StringLogger;
 public class MasterImpl implements Master
 {
     private static final int ID_GRAB_SIZE = 1000;
+    public static final int UNFINISHED_TRANSACTION_CLEANUP_DELAY = 5;
 
-    private final GraphDatabaseService graphDb;
+    private final GraphDatabaseSPI graphDb;
     private final StringLogger msgLog;
 
-    private final Map<SlaveContext, Pair<Transaction, AtomicLong/*Time since last suspended*/>> transactions = Collections
-            .synchronizedMap( new HashMap<SlaveContext, Pair<Transaction, AtomicLong>>() );
+    private final Map<SlaveContext, MasterTransaction> transactions = synchronizedMap( new HashMap<SlaveContext, MasterTransaction>() );
     private final ScheduledExecutorService unfinishedTransactionsExecutor;
+    private int unfinishedTransactionThreshold;
 
-    public MasterImpl( GraphDatabaseService db )
+    public MasterImpl( GraphDatabaseSPI db, int timeOut )
     {
         this.graphDb = db;
-        this.msgLog = ((AbstractGraphDatabase) db ).getMessageLog();
+        this.msgLog = graphDb.getMessageLog();
+        this.unfinishedTransactionThreshold = timeOut;
         this.unfinishedTransactionsExecutor = Executors.newSingleThreadScheduledExecutor();
         this.unfinishedTransactionsExecutor.scheduleWithFixedDelay( new Runnable()
         {
@@ -88,24 +90,24 @@ public class MasterImpl implements Master
             {
                 try
                 {
-                    Map<SlaveContext, Pair<Transaction, AtomicLong>> safeTransactions = null;
+                    Map<SlaveContext, MasterTransaction> safeTransactions = null;
                     synchronized ( transactions )
                     {
-                        safeTransactions = new HashMap<SlaveContext, Pair<Transaction,AtomicLong>>( transactions );
+                        safeTransactions = new HashMap<SlaveContext, MasterTransaction>( transactions );
                     }
-                    
-                    for ( Map.Entry<SlaveContext, Pair<Transaction, AtomicLong>> entry : safeTransactions.entrySet() )
+
+                    for ( Map.Entry<SlaveContext, MasterTransaction> entry : safeTransactions.entrySet() )
                     {
-                        long time = entry.getValue().other().get();
-                        if ( time != 0 && System.currentTimeMillis()-time >= 30*1000 )
+                        long time = entry.getValue().timeLastSuspended.get();
+                        if ( time != 0 && System.currentTimeMillis()-time >= unfinishedTransactionThreshold*1000 )
                         {
                             long displayableTime = (time == 0 ? 0 : (System.currentTimeMillis()-time));
-                            msgLog.logMessage( "Found old tx " + entry.getKey() + ", " + entry.getValue().first() + ", " + displayableTime );
+                            msgLog.logMessage( "Found old tx " + entry.getKey() + ", " + entry.getValue().transaction + ", " + displayableTime );
                             try
                             {
                                 Transaction otherTx = suspendOtherAndResumeThis( entry.getKey(), false );
                                 finishThisAndResumeOther( otherTx, entry.getKey(), false );
-                                msgLog.logMessage( "Rolled back old tx " + entry.getKey() + ", " + entry.getValue().first() + ", " + displayableTime );
+                                msgLog.logMessage( "Rolled back old tx " + entry.getKey() + ", " + entry.getValue().transaction + ", " + displayableTime );
                             }
                             catch ( IllegalStateException e )
                             {
@@ -114,7 +116,7 @@ public class MasterImpl implements Master
                             catch ( Throwable t )
                             {
                                 // Not really expected
-                                msgLog.logMessage( "Unable to roll back old tx " + entry.getKey() + ", " + entry.getValue().first() + ", " + displayableTime );
+                                msgLog.logMessage( "Unable to roll back old tx " + entry.getKey() + ", " + entry.getValue().transaction + ", " + displayableTime );
                             }
                         }
                     }
@@ -124,17 +126,12 @@ public class MasterImpl implements Master
                     // The show must go on
                 }
             }
-        }, 5, 5, TimeUnit.SECONDS );
+        }, UNFINISHED_TRANSACTION_CLEANUP_DELAY, UNFINISHED_TRANSACTION_CLEANUP_DELAY, TimeUnit.SECONDS );
     }
 
-    public GraphDatabaseService getGraphDb()
+    public GraphDatabaseSPI getGraphDb()
     {
         return this.graphDb;
-    }
-    
-    private Config getGraphDbConfig()
-    {
-        return ((AbstractGraphDatabase)this.graphDb).getConfig();
     }
     
     @Override
@@ -150,16 +147,16 @@ public class MasterImpl implements Master
             suspendThisAndResumeOther( otherTx, context );
         }
     }
-    
-    private <T extends PropertyContainer> Response<LockResult> acquireLock( SlaveContext context,
-            LockGrabber lockGrabber, T... entities )
+
+    private Response<LockResult> acquireLock( SlaveContext context,
+            LockGrabber lockGrabber, Object... entities )
     {
         Transaction otherTx = suspendOtherAndResumeThis( context, false );
         try
         {
-            LockManager lockManager = getGraphDbConfig().getLockManager();
-            LockReleaser lockReleaser = getGraphDbConfig().getLockReleaser();
-            for ( T entity : entities )
+            LockManager lockManager = graphDb.getLockManager();
+            LockReleaser lockReleaser = graphDb.getLockReleaser();
+            for ( Object entity : entities )
             {
                 lockGrabber.grab( lockManager, lockReleaser, entity );
             }
@@ -178,38 +175,27 @@ public class MasterImpl implements Master
             suspendThisAndResumeOther( otherTx, context );
         }
     }
-    
+
     private <T> Response<T> packResponse( SlaveContext context, T response )
     {
         return packResponse( context, response, MasterUtil.ALL );
     }
-    
+
     private <T> Response<T> packResponse( SlaveContext context, T response, Predicate<Long> filter )
     {
         return MasterUtil.packResponse( graphDb, context, response, filter );
     }
 
-    private Transaction getTxAndUpdateTimestamp( SlaveContext txId )
-    {
-        Pair<Transaction, AtomicLong> result = transactions.get( txId );
-        
-        // update time stamp to current time so that we know that this tx just completed
-        // a request and can now again start to be monitored, so that it can be
-        // rolled back if it's getting old.
-        result.other().set( System.currentTimeMillis() );
-        return result.first();
-    }
-    
     private Transaction getTx( SlaveContext txId )
     {
-        Pair<Transaction, AtomicLong> result = transactions.get( txId );
+        MasterTransaction result = transactions.get( txId );
         if ( result != null )
         {
             // set time stamp to zero so that we don't even try to finish it off
             // if getting old. This is because if the tx is active and old then
             // it means it's waiting for a lock and we cannot do anything about it.
-            result.other().set( 0 );
-            return result.first();
+            result.resetTime();
+            return result.transaction;
         }
         return null;
     }
@@ -218,10 +204,10 @@ public class MasterImpl implements Master
     {
         try
         {
-            TransactionManager txManager = getGraphDbConfig().getTxModule().getTxManager();
+            TransactionManager txManager = graphDb.getTxManager();
             txManager.begin();
             Transaction tx = txManager.getTransaction();
-            transactions.put( txId, Pair.of( tx, new AtomicLong() ) );
+            transactions.put( txId, new MasterTransaction( tx ) );
             return tx;
         }
         catch ( NotSupportedException e )
@@ -238,7 +224,7 @@ public class MasterImpl implements Master
     {
         try
         {
-            TransactionManager txManager = getGraphDbConfig().getTxModule().getTxManager();
+            TransactionManager txManager = graphDb.getTxManager();
             Transaction otherTx = txManager.getTransaction();
             Transaction transaction = getTx( txId );
             if ( otherTx != null && otherTx == transaction )
@@ -259,15 +245,22 @@ public class MasterImpl implements Master
                     }
                     else
                     {
-                        throw new IllegalStateException( "Transaction for " + txId +
-                                " not started on this master. There may have been a master switch between the" +
-                                " time this transaction started and up to now. This transaction cannot continue" +
-                                " since the state from the previous master isn't transferred." );
+                        throw new IllegalStateException( "Transaction " + txId + " has either timed out on the" +
+                        		" master or was not started on this master. There may have been a master switch" +
+                        		" between the time this transaction started and up to now. This transaction" +
+                        		" cannot continue since the state from the previous master isn't transferred." );
                     }
                 }
                 else
                 {
-                    txManager.resume( transaction );
+                    try
+                    {
+                        txManager.resume( transaction );
+                    }
+                    catch ( IllegalStateException e )
+                    {
+                        throw new UnableToResumeTransactionException( e );
+                    }
                 }
                 return otherTx;
             }
@@ -282,8 +275,20 @@ public class MasterImpl implements Master
     {
         try
         {
-            TransactionManager txManager = getGraphDbConfig().getTxModule().getTxManager();
-            getTxAndUpdateTimestamp( txId );
+            MasterTransaction tx = transactions.get( txId );
+            if ( tx.finishAsap() )
+            {   // If we've tried to finish this tx off earlier then do it now when we have the chance.
+                finishThisAndResumeOther( otherTx, txId, false );
+                return;
+            }
+            
+            TransactionManager txManager = graphDb.getTxManager();
+            
+            // update time stamp to current time so that we know that this tx just completed
+            // a request and can now again start to be monitored, so that it can be
+            // rolled back if it's getting old.
+            tx.updateTime();
+            
             txManager.suspend();
             if ( otherTx != null )
             {
@@ -300,7 +305,7 @@ public class MasterImpl implements Master
     {
         try
         {
-            TransactionManager txManager = getGraphDbConfig().getTxModule().getTxManager();
+            TransactionManager txManager = graphDb.getTxManager();
             if ( success ) txManager.commit();
             else txManager.rollback();
             transactions.remove( txId );
@@ -346,12 +351,12 @@ public class MasterImpl implements Master
     {
         return acquireLock( context, WRITE_LOCK_GRABBER, graphProperties() );
     }
-    
+
     private PropertyContainer graphProperties()
     {
-        return getGraphDbConfig().getGraphDbModule().getNodeManager().getGraphProperties();
+        return graphDb.getNodeManager().getGraphProperties();
     }
-    
+
     private Node[] nodesById( long[] ids )
     {
         Node[] result = new Node[ids.length];
@@ -374,7 +379,7 @@ public class MasterImpl implements Master
 
     public Response<IdAllocation> allocateIds( IdType idType )
     {
-        IdGenerator generator = getGraphDbConfig().getIdGeneratorFactory().get( idType );
+        IdGenerator generator = graphDb.getIdGeneratorFactory().get( idType );
         IdAllocation result = new IdAllocation( generator.nextIdBatch( ID_GRAB_SIZE ), generator.getHighId(),
                 generator.getDefragCount() );
         return MasterUtil.packResponseWithoutTransactionStream( graphDb, SlaveContext.EMPTY, result );
@@ -386,7 +391,7 @@ public class MasterImpl implements Master
         Transaction otherTx = suspendOtherAndResumeThis( context, false );
         try
         {
-            XaDataSource dataSource = getGraphDbConfig().getTxModule().getXaDataSourceManager()
+            XaDataSource dataSource = graphDb.getXaDataSourceManager()
                     .getXaDataSource( resource );
             final long txId = dataSource.applyPreparedTransaction( txGetter.extract() );
             Predicate<Long> upUntilThisTx = new Predicate<Long>()
@@ -410,30 +415,25 @@ public class MasterImpl implements Master
 
     public Response<Void> finishTransaction( SlaveContext context, boolean success )
     {
-        Transaction otherTx = suspendOtherAndResumeThis( context, false );
+        Transaction otherTx;
+        try
+        {
+            otherTx = suspendOtherAndResumeThis( context, false );
+        }
+        catch ( UnableToResumeTransactionException e )
+        {
+            transactions.get( context ).markAsFinishAsap();
+            throw e;
+        }
+        
         finishThisAndResumeOther( otherTx, context, success );
         return packResponse( context, null );
     }
 
     public Response<Integer> createRelationshipType( SlaveContext context, String name )
     {
-        Config config = getGraphDbConfig();
-        
-        // Does this type exist already?
-        Integer id = config.getRelationshipTypeHolder().getIdFor( name );
-        if ( id != null )
-        {
-            // OK, return
-            return packResponse( context, id );
-        }
-
-        // No? Create it then
-        id = config.getRelationshipTypeCreator().getOrCreate(
-                config.getTxModule().getTxManager(),
-                config.getIdGeneratorModule().getIdGenerator(),
-                config.getPersistenceModule().getPersistenceManager(),
-                config.getRelationshipTypeHolder(), name );
-        return packResponse( context, id );
+        graphDb.getRelationshipTypeHolder().addValidRelationshipType( name, true );
+        return packResponse( context, graphDb.getRelationshipTypeHolder().getIdFor( name ) );
     }
 
     public Response<Void> pullUpdates( SlaveContext context )
@@ -443,8 +443,8 @@ public class MasterImpl implements Master
 
     public Response<Pair<Integer,Long>> getMasterIdForCommittedTx( long txId, StoreId storeId )
     {
-        XaDataSource nioneoDataSource = getGraphDbConfig().getTxModule().getXaDataSourceManager()
-                .getXaDataSource( Config.DEFAULT_DATA_SOURCE_NAME );
+        XaDataSource nioneoDataSource = graphDb.getXaDataSourceManager()
+                .getNeoStoreDataSource();
         try
         {
             Pair<Integer, Long> masterId = nioneoDataSource.getMasterForCommittedTx( txId );
@@ -462,32 +462,19 @@ public class MasterImpl implements Master
         writer.done();
         return packResponse( context, null );
     }
-    
+
+    @Override
+    public Response<Void> copyTransactions( SlaveContext context,
+            String dsName, long startTxId, long endTxId )
+    {
+        return MasterUtil.getTransactions( graphDb, dsName, startTxId, endTxId );
+    }
+
     @Override
     public void shutdown()
     {
         unfinishedTransactionsExecutor.shutdown();
     }
-
-//    private SlaveContext makeSureThereIsAtLeastOneKernelTx( SlaveContext context )
-//    {
-//        Collection<Pair<String, Long>> txs = new ArrayList<Pair<String, Long>>();
-//        for ( Pair<String, Long> txEntry : context.lastAppliedTransactions() )
-//        {
-//            String resourceName = txEntry.first();
-//            XaDataSource dataSource = graphDbConfig.getTxModule().getXaDataSourceManager()
-//                    .getXaDataSource( resourceName );
-//            long startedCopyAtTxId = txEntry.other();
-//            if ( dataSource instanceof NeoStoreXaDataSource )
-//            {
-//                if ( startedCopyAtTxId == 1 ) return context;
-//                if ( startedCopyAtTxId == dataSource.getLastCommittedTxId() ) startedCopyAtTxId--;
-//            }
-//            txs.add( Pair.of( resourceName, startedCopyAtTxId ) );
-//        }
-//        return new SlaveContext( context.getSessionId(), context.machineId(),
-//                context.getEventIdentifier(), txs.toArray( new Pair[0] ) );
-//    }
 
     private static interface LockGrabber
     {
@@ -512,6 +499,19 @@ public class MasterImpl implements Master
         }
     };
 
+    @Override
+    public Response<LockResult> acquireIndexReadLock( SlaveContext context, String index, String key )
+    {
+        return acquireLock( context, READ_LOCK_GRABBER, new NodeManager.IndexLock( index, key ) );
+    }
+
+    @Override
+    public Response<LockResult> acquireIndexWriteLock( SlaveContext context, String index,
+            String key )
+    {
+        return acquireLock( context, WRITE_LOCK_GRABBER, new NodeManager.IndexLock( index, key ) );
+    }
+
     // =====================================================================
     // Just some methods which aren't really used when running a HA cluster,
     // but exposed so that other tools can reach that information.
@@ -531,5 +531,37 @@ public class MasterImpl implements Master
             txs.add( context );
         }
         return result;
+    }
+    
+    static class MasterTransaction
+    {
+        private final Transaction transaction;
+        private final AtomicLong timeLastSuspended = new AtomicLong();
+        private volatile boolean finishAsap;
+        
+        MasterTransaction( Transaction transaction )
+        {
+            this.transaction = transaction;
+        }
+        
+        void updateTime()
+        {
+            this.timeLastSuspended.set( System.currentTimeMillis() );
+        }
+        
+        void resetTime()
+        {
+            this.timeLastSuspended.set( 0 );
+        }
+        
+        void markAsFinishAsap()
+        {
+            this.finishAsap = true;
+        }
+        
+        boolean finishAsap()
+        {
+            return this.finishAsap;
+        }
     }
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,24 +19,22 @@
  */
 package org.neo4j.kernel.ha;
 
+import org.neo4j.com.Client;
 import org.neo4j.com.Protocol;
-import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.com.TxChecksumVerifier;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.ha.zookeeper.Machine;
-import org.neo4j.kernel.impl.nioneo.store.StoreId;
+import org.neo4j.kernel.ha.zookeeper.ZooClient;
 
 public class FakeMasterBroker extends AbstractBroker
 {
-    public FakeMasterBroker( int myMachineId, GraphDatabaseService graphDb )
-    {
-        super( myMachineId, graphDb );
-    }
+    private ZooClient.Configuration zooClientConfig;
 
-    @Override
-    public StoreId createCluster( StoreId storeIdSuggestion )
+    public FakeMasterBroker( Configuration conf, ZooClient.Configuration zooClientConfig )
     {
-        return storeIdSuggestion; // Master will always win
+        super( conf );
+        this.zooClientConfig = zooClientConfig;
     }
 
     public Machine getMasterMachine()
@@ -46,13 +44,14 @@ public class FakeMasterBroker extends AbstractBroker
 
     public Pair<Master, Machine> getMaster()
     {
-        return Pair.<Master, Machine>of( null, new Machine( getMyMachineId(), 0, 1, -1, null ) );
-        // throw new UnsupportedOperationException( "I am master" );
+        return Pair.<Master, Machine>of( null, new Machine( getMyMachineId(),
+                0, 1, -1, null ) );
     }
 
     public Pair<Master, Machine> getMasterReally( boolean allowChange )
     {
-        return Pair.<Master, Machine>of( null, new Machine( getMyMachineId(), 0, 1, -1, null ) );
+        return Pair.<Master, Machine>of( null, new Machine( getMyMachineId(),
+                0, 1, -1, null ) );
     }
 
     public boolean iAmMaster()
@@ -60,8 +59,10 @@ public class FakeMasterBroker extends AbstractBroker
         return getMyMachineId() == 0;
     }
 
-    public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
+    public Object instantiateMasterServer( GraphDatabaseSPI graphDb )
     {
-        return new MasterServer( new MasterImpl( graphDb ), Protocol.PORT, graphDb.getMessageLog() );
+        return new MasterServer( new MasterImpl( graphDb, zooClientConfig.lock_read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) ),
+                Protocol.PORT, graphDb.getMessageLog(), zooClientConfig.max_concurrent_channels_per_slave( Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ),
+                zooClientConfig.lock_read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ), TxChecksumVerifier.ALWAYS_MATCH );
     }
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -24,6 +24,7 @@ import java.util.EnumMap;
 import java.util.Map;
 
 import org.neo4j.com.ComException;
+import org.neo4j.com.Response;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.CommonFactories;
 import org.neo4j.kernel.IdGeneratorFactory;
@@ -32,12 +33,11 @@ import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.kernel.impl.nioneo.store.IdGenerator;
 import org.neo4j.kernel.impl.nioneo.store.IdRange;
-import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 
 public class SlaveIdGenerator implements IdGenerator
 {
     private static final long VALUE_REPRESENTING_NULL = -1;
-    
+
     public static class SlaveIdGeneratorFactory implements IdGeneratorFactory
     {
         private final Broker broker;
@@ -52,7 +52,7 @@ public class SlaveIdGenerator implements IdGenerator
             this.broker = broker;
             this.receiver = receiver;
         }
-        
+
         public IdGenerator open( String fileName, int grabSize, IdType idType, long highestIdInUse, boolean startup )
         {
             if ( startup ) new File( fileName ).delete();
@@ -63,7 +63,7 @@ public class SlaveIdGenerator implements IdGenerator
             generators.put( idType, generator );
             return generator;
         }
-        
+
         public void create( String fileName )
         {
             localFactory.create( fileName );
@@ -73,12 +73,7 @@ public class SlaveIdGenerator implements IdGenerator
         {
             return generators.get( idType );
         }
-        
-        public void updateIdGenerators( NeoStore store )
-        {
-            store.updateIdGenerators();
-        }
-        
+
         public void forgetIdAllocationsFromMaster()
         {
             for ( SlaveIdGenerator idGenerator : generators.values() )
@@ -87,7 +82,7 @@ public class SlaveIdGenerator implements IdGenerator
             }
         }
     };
-    
+
     private final Broker broker;
     private final ResponseReceiver receiver;
     private volatile long highestIdInUse;
@@ -105,12 +100,12 @@ public class SlaveIdGenerator implements IdGenerator
         this.receiver = receiver;
         this.localIdGenerator = localIdGenerator;
     }
-    
+
     private void forgetIdAllocationFromMaster()
     {
         this.idQueue = EMPTY_ID_RANGE_ITERATOR;
     }
-    
+
     @Override
     public void close( boolean shutdown )
     {
@@ -141,13 +136,19 @@ public class SlaveIdGenerator implements IdGenerator
             if ( nextId == VALUE_REPRESENTING_NULL )
             {
                 // If we dont have anymore grabbed ids from master, grab a bunch
-                IdAllocation allocation = master.first().allocateIds( idType ).response();
+                Response<IdAllocation> response = master.first().allocateIds(
+                        idType );
+                IdAllocation allocation = response.response();
+                response.close();
                 allocationMaster = master.other().getMachineId();
                 nextId = storeLocally( allocation );
             }
             else
             {
-                assert master.other().getMachineId() == allocationMaster;
+                if ( master.other().getMachineId() != allocationMaster )
+                {
+                    throw new ComException( "Master changed" );
+                }
             }
             return nextId;
         }
@@ -162,7 +163,7 @@ public class SlaveIdGenerator implements IdGenerator
             throw e;
         }
     }
-    
+
     public IdRange nextIdBatch( int size )
     {
         throw new UnsupportedOperationException( "Should never be called" );
@@ -195,17 +196,17 @@ public class SlaveIdGenerator implements IdGenerator
     {
         this.localIdGenerator.setHighId( id );
     }
-    
+
     public long getDefragCount()
     {
         return this.defragCount;
     }
-    
+
     @Override
     public void delete()
     {
     }
-    
+
     private static class IdRangeIterator
     {
         private int position = 0;
@@ -219,7 +220,7 @@ public class SlaveIdGenerator implements IdGenerator
             this.start = idRange.getRangeStart();
             this.length = idRange.getRangeLength();
         }
-        
+
         long next()
         {
             try
@@ -240,8 +241,8 @@ public class SlaveIdGenerator implements IdGenerator
             }
         }
     }
-    
-    private static IdRangeIterator EMPTY_ID_RANGE_ITERATOR = 
+
+    private static IdRangeIterator EMPTY_ID_RANGE_ITERATOR =
             new IdRangeIterator( new IdRange( new long[0], 0, 0 ) )
     {
         @Override

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -20,7 +20,7 @@
 package org.neo4j.kernel.ha;
 
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
@@ -41,21 +41,25 @@ public interface Broker
     int getMyMachineId();
 
     // I know... this isn't supposed to be here
-    Object instantiateMasterServer( AbstractGraphDatabase graphDb );
+    Object instantiateMasterServer( GraphDatabaseSPI graphDb );
 
     void rebindMaster();
 
     void notifyMasterChange( Machine newMaster );
 
     void shutdown();
-    
+
+    void restart();
+
+    void start();
+
     void setConnectionInformation( KernelData kernel );
 
     ConnectionInformation getConnectionInformation( int machineId );
 
     ConnectionInformation[] getConnectionInformation();
 
-    StoreId createCluster( StoreId storeIdSuggestion );
+    StoreId getClusterStoreId();
 
     void logStatus( StringLogger msgLog );
 }

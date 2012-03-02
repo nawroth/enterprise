@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -17,23 +17,12 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package slavetest.manual;
+package org.neo4j.kernel.ha;
 
-import java.io.File;
-
-import org.neo4j.test.ha.LocalhostZooKeeperCluster;
-
-public class ManualZooKeepers
+public class UnableToResumeTransactionException extends RuntimeException
 {
-    public static final File PATH = new File( "var/zoo" );
-
-    public static void main( String[] args ) throws Exception
+    public UnableToResumeTransactionException( Throwable cause )
     {
-        System.out.println( "Starting zoo keeper cluster (takes a couple of seconds)..." );
-        final LocalhostZooKeeperCluster zoo = new LocalhostZooKeeperCluster( ManualZooKeepers.class, 2181, 2182, 2183 );
-        System.out.println( "Zoo keeper cluster started, awaiting ENTER" );
-        System.out.println( zoo.getConnectionString() );
-        System.in.read();
-        zoo.shutdown();
+        super( cause );
     }
 }

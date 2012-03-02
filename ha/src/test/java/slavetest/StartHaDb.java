@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -26,6 +26,7 @@ import java.util.Date;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.Config;
+import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.zookeeper.NeoStoreUtil;
 
@@ -57,9 +58,9 @@ public class StartHaDb
     private static GraphDatabaseService startDb() throws IOException
     {
         return new HighlyAvailableGraphDatabase( PATH.getPath(), MapUtil.stringMap(
-                HighlyAvailableGraphDatabase.CONFIG_KEY_SERVER_ID, "" + MY_MACHINE_ID,
-                HighlyAvailableGraphDatabase.CONFIG_KEY_COORDINATORS, join( ZOO_KEEPER_SERVERS, "," ),
-                HighlyAvailableGraphDatabase.CONFIG_KEY_SERVER, ME,
+                HaConfig.CONFIG_KEY_SERVER_ID, "" + MY_MACHINE_ID,
+                HaConfig.CONFIG_KEY_COORDINATORS, join( ZOO_KEEPER_SERVERS, "," ),
+                HaConfig.CONFIG_KEY_SERVER, ME,
                 Config.ENABLE_REMOTE_SHELL, "true",
                 Config.KEEP_LOGICAL_LOGS, "true" ) );
     }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -23,9 +23,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.HighlyAvailableGraphDatabase.CONFIG_KEY_PULL_INTERVAL;
+import static org.neo4j.kernel.HaConfig.CONFIG_KEY_PULL_INTERVAL;
 
 import java.io.File;
 import java.io.IOException;
@@ -51,18 +50,13 @@ import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.PropertyContainer;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;
+import org.neo4j.helpers.collection.IterableWrapper;
 import org.neo4j.helpers.collection.IteratorUtil;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.AbstractGraphDatabase;
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
-import org.neo4j.kernel.ha.Broker;
-import org.neo4j.kernel.ha.BrokerFactory;
-import org.neo4j.kernel.impl.batchinsert.BatchInserter;
-import org.neo4j.kernel.impl.batchinsert.BatchInserterImpl;
 import org.neo4j.kernel.impl.transaction.xaframework.InMemoryLogBuffer;
+import org.neo4j.kernel.impl.transaction.xaframework.LogExtractor;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
-import org.neo4j.kernel.impl.transaction.xaframework.XaLogicalLog.LogExtractor;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.tooling.GlobalGraphOperations;
 
@@ -96,36 +90,13 @@ public abstract class AbstractHaTest
         }
     };
 
-    public static BrokerFactory wrapBrokerAndSetPlaceHolderDb(
-            final PlaceHolderGraphDatabaseService placeHolderDb, final Broker broker )
+    @Before
+    public void clearExpectedResults() throws Exception
     {
-        return new BrokerFactory()
-        {
-            @Override
-            public Broker create( AbstractGraphDatabase graphDb, Map<String, String> graphDbConfig )
-            {
-                placeHolderDb.setDb( graphDb );
-                return broker;
-            }
-        };
-    }
-
-
-    protected String getStorePrefix()
-    {
-        return Long.toString( storePrefix ) + "-";
-    }
-
-
-    protected File dbPath( int num )
-    {
-        maxNum = Math.max( maxNum, num );
-        return new File( DBS_PATH, getStorePrefix() + num );
-    }
-
-    protected boolean shouldDoVerificationAfterTests()
-    {
-        return doVerificationAfterTest;
+        maxNum = 0;
+        storePrefix = System.currentTimeMillis();
+        doVerificationAfterTest = true;
+        expectsResults = false;
     }
 
     /**
@@ -166,13 +137,21 @@ public abstract class AbstractHaTest
         } ).start();
     }
 
-    @Before
-    public void clearExpectedResults() throws Exception
+    protected String getStorePrefix()
     {
-        maxNum = 0;
-        storePrefix = System.currentTimeMillis();
-        doVerificationAfterTest = true;
-        expectsResults = false;
+        return Long.toString( storePrefix ) + "-";
+    }
+
+
+    protected File dbPath( int num )
+    {
+        maxNum = Math.max( maxNum, num );
+        return new File( DBS_PATH, getStorePrefix() + num );
+    }
+
+    protected boolean shouldDoVerificationAfterTests()
+    {
+        return doVerificationAfterTest;
     }
 
     public void verify( GraphDatabaseService refDb, GraphDatabaseService... dbs )
@@ -191,8 +170,15 @@ public abstract class AbstractHaTest
             int vNodeIndexServicePropCount = 0;
             int vNodeIndexProviderPropCount = 0;
 
-            Set<Node> otherNodes = IteratorUtil.addToCollection( GlobalGraphOperations.at( otherDb ).getAllNodes().iterator(),
-                    new HashSet<Node>() );
+            Set<Long> others = IteratorUtil.addToCollection(
+                    new IterableWrapper<Long, Node>( GlobalGraphOperations.at( otherDb ).getAllNodes() )
+                    {
+                        @Override
+                        protected Long underlyingObjectToObject( Node node )
+                        {
+                            return node.getId();
+                        }
+                    }, new HashSet<Long>() );
             for ( Node node : GlobalGraphOperations.at( refDb ).getAllNodes() )
             {
                 Node otherNode = otherDb.getNodeById( node.getId() );
@@ -202,10 +188,10 @@ public abstract class AbstractHaTest
                 vRelPropCount += counts[2];
                 vNodeIndexServicePropCount += counts[3];
                 vNodeIndexProviderPropCount += counts[4];
-                otherNodes.remove( otherNode );
+                others.remove( otherNode.getId() );
                 vNodeCount++;
             }
-            assertTrue( otherNodes.isEmpty() );
+            assertTrue( others.isEmpty() );
 
             if ( expectsResults )
             {
@@ -386,6 +372,8 @@ public abstract class AbstractHaTest
 
     protected abstract Fetcher<DoubleLatch> getDoubleLatch() throws Exception;
 
+    protected abstract void createBigMasterStore( int numberOfMegabytes );
+    
     private class Worker extends Thread
     {
         private boolean successfull;
@@ -643,18 +631,6 @@ public abstract class AbstractHaTest
         executeJob( new CommonJobs.CreateSubRefNodeJob( "whatever", "my_key", "my_value" ), 0 );
     }
 
-    protected void createBigMasterStore( int numberOfMegabytes )
-    {
-        // Will result in a 500Mb store
-        BatchInserter inserter = new BatchInserterImpl( dbPath( 0 ).getAbsolutePath() );
-        byte[] array = new byte[100000];
-        for ( int i = 0; i < numberOfMegabytes*10; i++ )
-        {
-            inserter.createNode( map( "array", array ) );
-        }
-        inserter.shutdown();
-    }
-
     @Test
     public void canCopyInitialDbWithLuceneIndexes() throws Exception
     {
@@ -674,7 +650,7 @@ public abstract class AbstractHaTest
         // Assert that there are all neostore logical logs in the copy.
         File slavePath = dbPath( slaveId );
         EmbeddedGraphDatabase slaveDb = new EmbeddedGraphDatabase( slavePath.getAbsolutePath() );
-        XaDataSource dataSource = slaveDb.getConfig().getTxModule().getXaDataSourceManager().getXaDataSource( Config.DEFAULT_DATA_SOURCE_NAME );
+        XaDataSource dataSource = slaveDb.getXaDataSourceManager().getNeoStoreDataSource();
         long lastTxId = dataSource.getLastCommittedTxId();
         LogExtractor extractor = dataSource.getXaContainer().getLogicalLog().getLogExtractor( 2/*first tx is always 2*/, lastTxId );
         for ( long txId = 2; txId < lastTxId; txId++ )
@@ -753,6 +729,22 @@ public abstract class AbstractHaTest
         }
         jobShouldNotBlock.finish();
         jobShouldNotBlock.join();
+    }
+    
+    @Ignore( "Exposes a weakness in HA protocol where locks cannot be released individually," +
+    		"but instead are always released when the transaction finishes" )
+    @Test
+    public void manuallyAcquireThenReleaseLocks() throws Exception
+    {
+        initializeDbs( 2 );
+        long node = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
+        pullUpdates();
+        Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
+        executeJob( new CommonJobs.AcquireNodeLockAndReleaseManually( node, latchFetcher ), 0 );
+        // This should be able to complete
+        executeJob( new CommonJobs.SetNodePropertyJob( node, "key", "value" ), 1 );
+        latchFetcher.fetch().countDownFirst();
+        pullUpdates();
     }
     
     static class WorkerThread extends Thread

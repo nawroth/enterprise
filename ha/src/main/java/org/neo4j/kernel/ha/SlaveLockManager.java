@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,9 +19,7 @@
  */
 package org.neo4j.kernel.ha;
 
-import javax.transaction.SystemException;
 import javax.transaction.Transaction;
-import javax.transaction.TransactionManager;
 
 import org.neo4j.com.ComException;
 import org.neo4j.com.Response;
@@ -29,42 +27,25 @@ import org.neo4j.com.SlaveContext;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.kernel.DeadlockDetectedException;
-import org.neo4j.kernel.LockManagerFactory;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.kernel.impl.core.GraphProperties;
+import org.neo4j.kernel.impl.core.NodeManager.IndexLock;
 import org.neo4j.kernel.impl.transaction.IllegalResourceException;
 import org.neo4j.kernel.impl.transaction.LockManager;
+import org.neo4j.kernel.impl.transaction.RagManager;
 import org.neo4j.kernel.impl.transaction.TxHook;
 import org.neo4j.kernel.impl.transaction.TxManager;
-import org.neo4j.kernel.impl.transaction.TxModule;
 
 public class SlaveLockManager extends LockManager
 {
-    public static class SlaveLockManagerFactory implements LockManagerFactory
-    {
-        private final Broker broker;
-        private final ResponseReceiver receiver;
-
-        public SlaveLockManagerFactory( Broker broker, ResponseReceiver receiver )
-        {
-            this.broker = broker;
-            this.receiver = receiver;
-        }
-        
-        public LockManager create( TxModule txModule )
-        {
-            return new SlaveLockManager( txModule.getTxManager(), txModule.getTxHook(), broker, receiver );
-        }
-    };
-    
     private final Broker broker;
-    private final TransactionManager tm;
+    private final TxManager tm;
     private final ResponseReceiver receiver;
     private final TxHook txHook;
     
-    public SlaveLockManager( TransactionManager tm, TxHook txHook, Broker broker, ResponseReceiver receiver )
+    public SlaveLockManager( RagManager ragManager, TxManager tm, TxHook txHook, Broker broker, ResponseReceiver receiver )
     {
-        super( tm );
+        super( ragManager );
         this.tm = tm;
         this.txHook = txHook;
         this.broker = broker;
@@ -73,7 +54,7 @@ public class SlaveLockManager extends LockManager
 
     private int getLocalTxId()
     {
-        return ((TxManager) tm).getEventIdentifier();
+        return tm.getEventIdentifier();
     }
     
     @Override
@@ -84,6 +65,7 @@ public class SlaveLockManager extends LockManager
         if ( resource instanceof Node ) grabber = LockGrabber.NODE_READ;
         else if ( resource instanceof Relationship ) grabber = LockGrabber.RELATIONSHIP_READ;
         else if ( resource instanceof GraphProperties ) grabber = LockGrabber.GRAPH_READ;
+        else if ( resource instanceof IndexLock ) grabber = LockGrabber.INDEX_READ;
 
         try
         {
@@ -127,15 +109,8 @@ public class SlaveLockManager extends LockManager
     {
         // The main point of initializing transaction (for HA) is in TransactionImpl, so this is
         // for that extra point where grabbing a lock
-        try
-        {
-            Transaction tx = tm.getTransaction();
-            if ( !txHook.hasAnyLocks( tx ) ) txHook.initializeTransaction( ((TxManager)tm).getEventIdentifier() );
-        }
-        catch ( SystemException e )
-        {
-            throw new RuntimeException( e );
-        }
+        Transaction tx = tm.getTransaction();
+        if ( !txHook.hasAnyLocks( tx ) ) txHook.initializeTransaction( tm.getEventIdentifier() );
     }
 
     @Override
@@ -147,6 +122,7 @@ public class SlaveLockManager extends LockManager
         if ( resource instanceof Node ) grabber = LockGrabber.NODE_WRITE;
         else if ( resource instanceof Relationship ) grabber = LockGrabber.RELATIONSHIP_WRITE;
         else if ( resource instanceof GraphProperties ) grabber = LockGrabber.GRAPH_WRITE;
+        else if ( resource instanceof IndexLock ) grabber = LockGrabber.INDEX_WRITE;
 
         try
         {
@@ -238,6 +214,24 @@ public class SlaveLockManager extends LockManager
             Response<LockResult> acquireLock( Master master, SlaveContext context, Object resource )
             {
                 return master.acquireGraphWriteLock( context );
+            }
+        },
+        INDEX_WRITE
+        {
+            @Override
+            Response<LockResult> acquireLock( Master master, SlaveContext context, Object resource )
+            {
+                IndexLock lock = (IndexLock) resource;
+                return master.acquireIndexWriteLock( context, lock.getIndex(), lock.getKey() );
+            }
+        },
+        INDEX_READ
+        {
+            @Override
+            Response<LockResult> acquireLock( Master master, SlaveContext context, Object resource )
+            {
+                IndexLock lock = (IndexLock) resource;
+                return master.acquireIndexReadLock( context, lock.getIndex(), lock.getKey() );
             }
         };
         

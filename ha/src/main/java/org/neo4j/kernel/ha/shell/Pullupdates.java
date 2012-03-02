@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -34,7 +34,7 @@ public class Pullupdates extends ReadOnlyGraphDatabaseApp
     protected String exec( AppCommandParser parser, Session session, Output out )
             throws ShellException, RemoteException
     {
-        if ( !(getServer().getDb() instanceof HighlyAvailableGraphDatabase) )
+        if ( !(getServer().getDb() instanceof HighlyAvailableGraphDatabase ) )
         {
             throw new ShellException( "Your database isn't started in HA mode" );
         }

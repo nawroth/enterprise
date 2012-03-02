@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -22,41 +22,45 @@ package org.neo4j.kernel.ha.zookeeper;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.util.Map;
 
 import javax.management.remote.JMXServiceURL;
 
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.ConfigurationPrefix;
+import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.ConnectionInformation;
 import org.neo4j.kernel.ha.Master;
-import org.neo4j.kernel.ha.MasterImpl;
-import org.neo4j.kernel.ha.MasterServer;
-import org.neo4j.kernel.ha.ResponseReceiver;
+import org.neo4j.kernel.ha.shell.ZooClientFactory;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.management.Neo4jManager;
 
 public class ZooKeeperBroker extends AbstractBroker
 {
-    private final ZooClient zooClient;
-    private final String haServer;
-    private final int machineId;
-    private final String clusterName;
-
-    public ZooKeeperBroker( AbstractGraphDatabase graphDb, String clusterName, int machineId,
-            String zooKeeperServers, String haServer, int backupPort, int clientReadTimeout,
-            int maxConcurrentChannelsPerClient, boolean writeLastCommittedTx, ResponseReceiver receiver )
+    @ConfigurationPrefix( "ha." )
+    public interface Configuration
+        extends AbstractBroker.Configuration
     {
-        super( machineId, graphDb );
-        this.clusterName = clusterName;
-        this.machineId = machineId;
-        this.haServer = haServer;
-        this.zooClient = new ZooClient( zooKeeperServers, machineId, getRootPathGetter( graphDb.getStoreDir() ),
-                receiver, haServer, backupPort, clientReadTimeout, maxConcurrentChannelsPerClient, writeLastCommittedTx, graphDb );
+        int coordinator_fetch_info_timeout( int def );
+    }
+    
+    private final ZooClientFactory zooClientFactory;
+    private volatile ZooClient zooClient;
+    private int fetchInfoTimeout;
+
+    public ZooKeeperBroker( Configuration conf, ZooClientFactory zooClientFactory )
+    {
+        super( conf );
+        this.zooClientFactory = zooClientFactory;
+        fetchInfoTimeout = conf.coordinator_fetch_info_timeout(HaConfig.CONFIG_DEFAULT_COORDINATOR_FETCH_INFO_TIMEOUT);
+        start();
     }
 
     @Override
@@ -86,9 +90,17 @@ public class ZooKeeperBroker extends AbstractBroker
         {
             return result.append( " BAD SERVER STRING" ).toString();
         }
+        SocketAddress sockAddr = new InetSocketAddress( host, port );
         try
         {
-            Socket soc = new Socket( host, port );
+            /*
+             * There is a chance the zk instance has gone down for the count -
+             * the process, the network interface or the whole machine. We don't
+             * want to block the main thread in such a case, just fail.
+             */
+            Socket soc = new Socket();
+            soc.connect( sockAddr, fetchInfoTimeout );
+
             BufferedReader in = new BufferedReader( new InputStreamReader( soc.getInputStream() ) );
             try
             {
@@ -119,32 +131,19 @@ public class ZooKeeperBroker extends AbstractBroker
     }
 
     @Override
-    public StoreId createCluster( StoreId storeIdSuggestion )
+    public StoreId getClusterStoreId()
     {
-        return zooClient.createCluster( clusterName, storeIdSuggestion );
-    }
-
-    private RootPathGetter getRootPathGetter( String storeDir )
-    {
-        try
-        {
-            new NeoStoreUtil( storeDir );
-            return RootPathGetter.forKnownStore( storeDir );
-        }
-        catch ( RuntimeException e )
-        {
-            return RootPathGetter.forUnknownStore( storeDir );
-        }
+        return getZooClient().getClusterStoreId();
     }
 
     @Override
     public void setConnectionInformation( KernelData kernel )
     {
         String instanceId = kernel.instanceId();
-        JMXServiceURL url = Neo4jManager.getConnectionURL( kernel );
+        JMXServiceURL url = Neo4jManager.getConnectionURL(kernel);
         if ( instanceId != null && url != null )
         {
-            zooClient.setJmxConnectionData( url, instanceId );
+            getZooClient().setJmxConnectionData( url, instanceId );
         }
     }
 
@@ -161,8 +160,9 @@ public class ZooKeeperBroker extends AbstractBroker
     @Override
     public ConnectionInformation[] getConnectionInformation()
     {
-        Map<Integer, Machine> machines = zooClient.getAllMachines( false );
-        Machine master = zooClient.getMasterBasedOn( machines.values() );
+        Map<Integer, ZooKeeperMachine> machines = getZooClient().getAllMachines(
+                false );
+        Machine master = getZooClient().getMasterBasedOn( machines.values() );
         ConnectionInformation[] result = new ConnectionInformation[machines.size()];
         int i = 0;
         for ( Machine machine : machines.values() )
@@ -174,61 +174,95 @@ public class ZooKeeperBroker extends AbstractBroker
 
     private ConnectionInformation addJmxInfo( ConnectionInformation connect )
     {
-        zooClient.getJmxConnectionData( connect );
+        getZooClient().getJmxConnectionData( connect );
         return connect;
     }
 
     public Pair<Master, Machine> getMaster()
     {
-        return zooClient.getCachedMaster();
+        return getZooClient().getCachedMaster();
     }
 
     public Pair<Master, Machine> getMasterReally( boolean allowChange )
     {
-        return zooClient.getMasterFromZooKeeper( true, allowChange );
+        return getZooClient().getMasterFromZooKeeper( true, allowChange );
     }
-    
+
     @Override
     public Machine getMasterExceptMyself()
     {
-        Map<Integer, Machine> machines = zooClient.getAllMachines( true );
-        machines.remove( this.machineId );
-        return zooClient.getMasterBasedOn( machines.values() );
+        Map<Integer, ZooKeeperMachine> machines = getZooClient().getAllMachines(
+                true );
+        machines.remove( getMyMachineId() );
+        return getZooClient().getMasterBasedOn( machines.values() );
     }
 
-    public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
+    public Object instantiateMasterServer( GraphDatabaseSPI graphDb )
     {
-        MasterServer server = new MasterServer( new MasterImpl( graphDb ),
-                Machine.splitIpAndPort( haServer ).other(), graphDb.getMessageLog() );
-        return server;
+        return zooClient.instantiateMasterServer( graphDb );
     }
 
     @Override
     public void setLastCommittedTxId( long txId )
     {
-        zooClient.setCommittedTx( txId );
+        getZooClient().setCommittedTx( txId );
     }
 
     public boolean iAmMaster()
     {
-        return zooClient.getCachedMaster().other().getMachineId() == getMyMachineId();
+        return getZooClient().getCachedMaster().other().getMachineId() == getMyMachineId();
     }
 
     @Override
-    public void shutdown()
+    public synchronized void start()
     {
+        if ( zooClient != null )
+        {
+            throw new IllegalStateException(
+                    "Broker already started, ZooClient is " + zooClient );
+        }
+        this.zooClient = zooClientFactory.newZooClient();
+    }
+
+    @Override
+    public synchronized void shutdown()
+    {
+        if (zooClient == null)
+        {
+            throw new IllegalStateException( "Broker already shutdown" );
+        }
         zooClient.shutdown();
+        zooClient = null;
+    }
+
+    @Override
+    public synchronized void restart()
+    {
+        shutdown();
+        start();
     }
 
     @Override
     public void rebindMaster()
     {
-        zooClient.setDataChangeWatcher( ZooClient.MASTER_REBOUND_CHILD, machineId );
+        getZooClient().setDataChangeWatcher( ZooClient.MASTER_REBOUND_CHILD,
+                getMyMachineId() );
     }
 
     @Override
     public void notifyMasterChange( Machine newMaster )
     {
-        zooClient.setDataChangeWatcher( ZooClient.MASTER_NOTIFY_CHILD, newMaster.getMachineId(), true );
+        getZooClient().setDataChangeWatcher( ZooClient.MASTER_NOTIFY_CHILD,
+                newMaster.getMachineId() );
+    }
+
+    protected ZooClient getZooClient()
+    {
+        if ( zooClient == null )
+        {
+            throw new IllegalStateException(
+                    "This ZooKeeperBroker has been shutdown - no operations are possible until started up again. Maybe the database is restarting?" );
+        }
+        return zooClient;
     }
 }

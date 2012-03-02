@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,21 +19,18 @@
  */
 package org.neo4j.kernel.ha;
 
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 
 public class FakeSlaveBroker extends AbstractBroker
 {
     private final Master master;
-    private final Machine masterMachine;
 
-    public FakeSlaveBroker( Master master, int masterMachineId, int myMachineId, GraphDatabaseService graphDb )
+    public FakeSlaveBroker( Master master, int masterMachineId, AbstractBroker.Configuration config)
     {
-        super( myMachineId, graphDb );
+        super( config );
         this.master = master;
-        this.masterMachine = new Machine( masterMachineId, 0, 1, -1, null );
     }
 
     public Pair<Master, Machine> getMaster()
@@ -51,7 +48,7 @@ public class FakeSlaveBroker extends AbstractBroker
         return false;
     }
 
-    public Object instantiateMasterServer( AbstractGraphDatabase graphDb )
+    public Object instantiateMasterServer( GraphDatabaseSPI graphDb )
     {
         throw new UnsupportedOperationException();
     }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -29,12 +29,13 @@ import javax.management.NotCompliantMBeanException;
 import javax.management.remote.JMXServiceURL;
 
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.SlaveContext.Tx;
 import org.neo4j.helpers.Format;
-import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Service;
 import org.neo4j.jmx.impl.ManagementBeanProvider;
 import org.neo4j.jmx.impl.ManagementData;
 import org.neo4j.jmx.impl.Neo4jMBean;
+import org.neo4j.kernel.ha.AbstractHAGraphDatabase;
 import org.neo4j.kernel.ha.ConnectionInformation;
 import org.neo4j.kernel.ha.MasterServer;
 import org.neo4j.management.HighAvailability;
@@ -66,7 +67,7 @@ public final class HighAvailabilityBean extends ManagementBeanProvider
 
     private static boolean isHA( ManagementData management )
     {
-        return management.getKernelData().graphDatabase() instanceof HighlyAvailableGraphDatabase;
+        return management.getKernelData().graphDatabase() instanceof AbstractHAGraphDatabase;
     }
 
     private static class HighAvailibilityImpl extends Neo4jMBean implements HighAvailability
@@ -77,13 +78,13 @@ public final class HighAvailabilityBean extends ManagementBeanProvider
                 throws NotCompliantMBeanException
         {
             super( management );
-            this.db = (HighlyAvailableGraphDatabase) management.getKernelData().graphDatabase();
+            this.db = ((AbstractHAGraphDatabase) management.getKernelData().graphDatabase()).getHighlyAvailableGraphDatabase();
         }
 
         HighAvailibilityImpl( ManagementData management, boolean isMXBean )
         {
             super( management, isMXBean );
-            this.db = (HighlyAvailableGraphDatabase) management.getKernelData().graphDatabase();
+            this.db = ((AbstractHAGraphDatabase) management.getKernelData().graphDatabase()).getHighlyAvailableGraphDatabase();
         }
 
         public String getMachineId()
@@ -108,7 +109,7 @@ public final class HighAvailabilityBean extends ManagementBeanProvider
 
         public boolean isMaster()
         {
-            return db.getMasterServerIfMaster() != null;
+            return db.isMaster();
         }
 
         public SlaveInfo[] getConnectedSlaves()
@@ -149,9 +150,9 @@ public final class HighAvailabilityBean extends ManagementBeanProvider
             for ( SlaveContext context : contexts )
             {
                 Map<String, Long> lastTransactions = new HashMap<String, Long>();
-                for ( Pair<String, Long> tx : context.lastAppliedTransactions() )
+                for ( Tx tx : context.lastAppliedTransactions() )
                 {
-                    lastTransactions.put( tx.first(), tx.other() );
+                    lastTransactions.put( tx.getDataSourceName(), tx.getTxId() );
                 }
                 txInfo.add( new SlaveTransaction( context.getEventIdentifier(), lastTransactions ) );
             }

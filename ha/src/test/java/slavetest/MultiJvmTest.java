@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -63,6 +63,12 @@ public class MultiJvmTest extends AbstractHaTest
     {
         for ( StandaloneDatabase jvm : jvms )
             jvm.awaitStarted();
+    }
+    
+    @Override
+    protected void createBigMasterStore( int numberOfMegabytes )
+    {
+        throw new UnsupportedOperationException();
     }
 
     protected static String[] buildExtraArgs( Map<String, String> config )

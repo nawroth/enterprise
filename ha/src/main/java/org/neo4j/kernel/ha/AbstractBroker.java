@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,10 +19,7 @@
  */
 package org.neo4j.kernel.ha;
 
-import java.util.Map;
-
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.kernel.ConfigurationPrefix;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
@@ -30,23 +27,33 @@ import org.neo4j.kernel.impl.util.StringLogger;
 
 public abstract class AbstractBroker implements Broker
 {
-    private final int myMachineId;
-    private final GraphDatabaseService graphDb;
-
-    public AbstractBroker( int myMachineId, GraphDatabaseService graphDb )
+    @ConfigurationPrefix( "ha." )
+    public interface Configuration
     {
-        this.myMachineId = myMachineId;
-        this.graphDb = graphDb;
+        int server_id();
+    }
+    
+    private static final StoreId storeId = new StoreId();
+    private Configuration config;
+
+    public AbstractBroker( Configuration config)
+    {
+        this.config = config;
     }
 
     public void setLastCommittedTxId( long txId )
     {
         // Do nothing
     }
+    
+    protected Configuration getConfig()
+    {
+        return config;
+    }
 
     public int getMyMachineId()
     {
-        return this.myMachineId;
+        return config.server_id();
     }
 
     @Override
@@ -55,12 +62,17 @@ public abstract class AbstractBroker implements Broker
         // Do nothing
     }
 
-    public String getStoreDir()
+    public void shutdown()
     {
-        return ((AbstractGraphDatabase) graphDb).getStoreDir();
+        // Do nothing
     }
 
-    public void shutdown()
+    public void restart()
+    {
+        // Do nothing
+    }
+
+    public void start()
     {
         // Do nothing
     }
@@ -73,17 +85,6 @@ public abstract class AbstractBroker implements Broker
     public void rebindMaster()
     {
         // Do nothing
-    }
-    
-    public static BrokerFactory wrapSingleBroker( final Broker broker )
-    {
-        return new BrokerFactory()
-        {
-            public Broker create( AbstractGraphDatabase graphDb, Map<String, String> graphDbConfig )
-            {
-                return broker;
-            }
-        };
     }
 
     public void setConnectionInformation( KernelData kernel )
@@ -102,9 +103,9 @@ public abstract class AbstractBroker implements Broker
                                                  + " does not support ConnectionInformation" );
     }
 
-    public StoreId createCluster( StoreId storeIdSuggestion )
+    public StoreId getClusterStoreId()
     {
-        throw new UnsupportedOperationException( getClass().getName() );
+        return storeId;
     }
 
     @Override

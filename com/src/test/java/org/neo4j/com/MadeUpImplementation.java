@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -30,27 +30,29 @@ public class MadeUpImplementation implements MadeUpCommunicationInterface
     {
         this.storeIdToRespondWith = storeIdToRespondWith;
     }
-    
+
     @Override
     public Response<Integer> multiply( int value1, int value2 )
     {
         gotCalled = true;
-        return new Response<Integer>( value1*value2, storeIdToRespondWith, TransactionStream.EMPTY );
+        return new Response<Integer>( value1 * value2, storeIdToRespondWith,
+                TransactionStream.EMPTY, ResourceReleaser.NO_OP );
     }
-    
+
     @Override
     public Response<Void> streamSomeData( MadeUpWriter writer, int dataSize )
     {
         writer.write( new KnownDataByteChannel( dataSize ) );
-        return new Response<Void>( null, storeIdToRespondWith, TransactionStream.EMPTY );
+        return new Response<Void>( null, storeIdToRespondWith,
+                TransactionStream.EMPTY, ResourceReleaser.NO_OP );
     }
-    
+
     @Override
     public Response<Integer> throwException( String messageInException )
     {
         throw new MadeUpException( messageInException, new Exception( "The cause of it" ) );
     }
-    
+
     public boolean gotCalled()
     {
         return this.gotCalled;

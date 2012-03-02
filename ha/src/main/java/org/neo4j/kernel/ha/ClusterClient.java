@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,11 +19,20 @@
  */
 package org.neo4j.kernel.ha;
 
-import java.util.Map;
+import org.neo4j.helpers.Pair;
+import org.neo4j.kernel.ha.zookeeper.Machine;
 
-import org.neo4j.kernel.AbstractGraphDatabase;
-
-public interface BrokerFactory
+public interface ClusterClient
 {
-    Broker create( AbstractGraphDatabase graphDb, Map<String, String> graphDbConfig );
+    public int getBackupPort( int machineId );
+
+    public Machine getMaster();
+
+    public Pair<Master, Machine> getMasterClient();
+
+    /**
+     * Returns the connected slaves in this cluster.
+     * @return the connected slaves in this cluster.
+     */
+    public Machine[] getConnectedSlaves();
 }

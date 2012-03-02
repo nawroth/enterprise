@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -21,10 +21,12 @@ package org.neo4j.backup;
 
 import org.jboss.netty.channel.Channel;
 import org.neo4j.backup.BackupClient.BackupRequestType;
+import org.neo4j.com.Client;
 import org.neo4j.com.Protocol;
 import org.neo4j.com.RequestType;
 import org.neo4j.com.Server;
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.TxChecksumVerifier;
 import org.neo4j.kernel.impl.util.StringLogger;
 
 class BackupServer extends Server<TheBackupInterface, Object>
@@ -36,7 +38,9 @@ class BackupServer extends Server<TheBackupInterface, Object>
     
     public BackupServer( TheBackupInterface realMaster, int port, StringLogger logger )
     {
-        super( realMaster, port, logger, FRAME_LENGTH, PROTOCOL_VERSION );
+        super( realMaster, port, logger, FRAME_LENGTH, PROTOCOL_VERSION,
+                DEFAULT_MAX_NUMBER_OF_CONCURRENT_TRANSACTIONS, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
+                TxChecksumVerifier.ALWAYS_MATCH );
     }
 
     @Override

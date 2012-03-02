@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -25,10 +25,12 @@ import java.net.URISyntaxException;
 import org.apache.zookeeper.KeeperException;
 import org.neo4j.backup.BackupExtensionService;
 import org.neo4j.com.ComException;
+import org.neo4j.helpers.Args;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Service;
-import org.neo4j.kernel.ha.zookeeper.ClusterManager;
+import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 
 @Service.Implementation( BackupExtensionService.class )
 public final class HaBackupProvider extends BackupExtensionService
@@ -42,15 +44,16 @@ public final class HaBackupProvider extends BackupExtensionService
     }
 
     @Override
-    public URI resolve( URI address )
+    public URI resolve( URI address, Args args )
     {
         String master = null;
         try
         {
             System.out.println( "Asking coordinator service at '" + address
                                 + "' for master" );
+            String clusterName = args.get( HaConfig.CONFIG_KEY_CLUSTER_NAME, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME );
             master = getMasterServerInCluster( address.getSchemeSpecificPart().substring(
-                    2 ) ); // skip the "//" part
+                    2 ), clusterName ); // skip the "//" part
             System.out.println( "Found master '" + master + "' in cluster" );
         }
         catch ( ComException e )
@@ -79,18 +82,19 @@ public final class HaBackupProvider extends BackupExtensionService
         return toReturn;
     }
 
-    private static String getMasterServerInCluster( String from )
+    private static String getMasterServerInCluster( String from, String clusterName )
     {
-        ClusterManager clusterManager = new ClusterManager( from );
+        ZooKeeperClusterClient clusterClient = new ZooKeeperClusterClient(
+                from, clusterName );
         Pair<String, Integer> masterServer = null;
         try
         {
-            clusterManager.waitForSyncConnected();
-            Machine master = clusterManager.getMaster();
+            clusterClient.waitForSyncConnected();
+            Machine master = clusterClient.getMaster();
             masterServer = master.getServer();
             if ( masterServer != null )
             {
-                int backupPort = clusterManager.getBackupPort( master.getMachineId() );
+                int backupPort = clusterClient.getBackupPort( master.getMachineId() );
                 return String.format( ServerAddressFormat,
                         masterServer.first(), backupPort );
             }
@@ -99,7 +103,7 @@ public final class HaBackupProvider extends BackupExtensionService
         }
         finally
         {
-            clusterManager.shutdown();
+            clusterClient.shutdown();
         }
     }
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -23,14 +23,14 @@ import org.neo4j.com.MasterUtil;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
 import org.neo4j.com.StoreWriter;
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.kernel.Config;
+import org.neo4j.kernel.GraphDatabaseSPI;
 
 class BackupImpl implements TheBackupInterface
 {
-    private final GraphDatabaseService graphDb;
+    private final GraphDatabaseSPI graphDb;
 
-    public BackupImpl( GraphDatabaseService graphDb )
+    public BackupImpl( GraphDatabaseSPI graphDb )
     {
         this.graphDb = graphDb;
     }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -84,7 +84,7 @@ public class BackupTool
         if ( service != null )
         { // If in here, it means a module was loaded. Use it and substitute the
           // passed URI
-            backupURI = service.resolve( backupURI );
+            backupURI = service.resolve( backupURI, arguments );
         }
         doBackup( full, backupURI, to, verify );
     }
@@ -102,7 +102,11 @@ public class BackupTool
 
         if ( arguments.get( FROM, null ) == null )
         {
-            exitAbnormally( "Please specify " + dash( FROM ) );
+            exitAbnormally( "Please specify " + dash( FROM ) + ", examples:\n" +
+                    "  " + dash( FROM ) + " single://192.168.1.34\n" +
+                    "  " + dash( FROM ) + " single://192.168.1.34:1234\n" +
+                    "  " + dash( FROM ) + " ha://192.168.1.15:2181\n" +
+                    "  " + dash( FROM ) + " ha://192.168.1.15:2181,192.168.1.16:2181" );
         }
 
         if ( arguments.get( TO, null ) == null )
@@ -136,8 +140,7 @@ public class BackupTool
         }
         catch ( ComException e )
         {
-            exitAbnormally( "Couldn't connect to '" + from + "', "
-                            + e.getMessage() );
+            exitAbnormally( "Couldn't connect to '" + from + "'", e );
         }
     }
 
@@ -158,14 +161,12 @@ public class BackupTool
             }
             else
             {
-                exitAbnormally( "TransactionFailureException from existing backup at '"
-                                + from + "': , " + e.getMessage() );
+                exitAbnormally( "TransactionFailureException from existing backup at '" + from + "'.", e);
             }
         }
         catch ( ComException e )
         {
-            exitAbnormally( "Couldn't connect to '" + from + "', "
-                            + e.getMessage() );
+            exitAbnormally( "Couldn't connect to '" + from + "' ", e );
         }
         if ( failedBecauseOfStoreVersionMismatch )
         {
@@ -178,8 +179,7 @@ public class BackupTool
             }
             catch ( IOException e )
             {
-                exitAbnormally( "There was a problem moving the old database out of the way - cannot continue, aborting: "
-                                + e.getMessage() );
+                exitAbnormally( "There was a problem moving the old database out of the way - cannot continue, aborting.", e );
             }
             doBackupFull( from, to, verify );
         }
@@ -196,6 +196,13 @@ public class BackupTool
         }
         StoreFiles.move( toDir, backupDir );
         LogFiles.move( toDir, backupDir );
+    }
+
+    private static void exitAbnormally( String message, Exception ex )
+    {
+        System.out.println( message );
+        ex.printStackTrace( System.out );
+        System.exit( 1 );
     }
 
     private static void exitAbnormally( String message )

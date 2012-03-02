@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -21,14 +21,11 @@ package org.neo4j.backup;
 
 import static org.junit.Assert.assertEquals;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
 import static org.neo4j.kernel.Config.osIsWindows;
 
 import java.io.File;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.commons.io.FileUtils;
@@ -40,14 +37,16 @@ import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.test.DbRepresentation;
+import org.neo4j.test.ProcessStreamHandler;
 
 public class TestBackupToolEmbedded
 {
     public static final String PATH = "target/var/db";
     public static final String BACKUP_PATH = "target/var/backup-db";
     private GraphDatabaseService db;
-    
+
     @Before
     public void before() throws Exception
     {
@@ -55,7 +54,7 @@ public class TestBackupToolEmbedded
         FileUtils.deleteDirectory( new File( PATH ) );
         FileUtils.deleteDirectory( new File( BACKUP_PATH ) );
     }
-    
+
     public static DbRepresentation createSomeData( GraphDatabaseService db )
     {
         Transaction tx = db.beginTx();
@@ -66,19 +65,19 @@ public class TestBackupToolEmbedded
         tx.finish();
         return DbRepresentation.of( db );
     }
-    
+
     @After
     public void after()
     {
         if ( osIsWindows() ) return;
         db.shutdown();
     }
-    
+
     @Test
     public void makeSureBackupCannotBePerformedWithInvalidArgs() throws Exception
     {
         if ( osIsWindows() ) return;
-        startDb( "true" );
+        startDb( null );
         // No args at all
         assertEquals( 1, runBackupToolFromOtherJvmToGetExitCode() );
         // no targets
@@ -106,12 +105,12 @@ public class TestBackupToolEmbedded
                 runBackupToolFromOtherJvmToGetExitCode( "-full", "-from",
                         "foo:/localhost", "-to", "some-dir" ) );
     }
-    
+
     @Test
     public void makeSureBackupCanBePerformedWithDefaultPort() throws Exception
     {
         if ( osIsWindows() ) return;
-        startDb( "true" );
+        startDb( null );
         assertEquals(
                 0,
                 runBackupToolFromOtherJvmToGetExitCode( "-full", "-from",
@@ -132,7 +131,7 @@ public class TestBackupToolEmbedded
     {
         if ( osIsWindows() ) return;
         int port = 4445;
-        startDb( "port=" + port );
+        startDb( "" + port );
         assertEquals(
                 1,
                 runBackupToolFromOtherJvmToGetExitCode( "-full", "-from",
@@ -153,45 +152,31 @@ public class TestBackupToolEmbedded
                         BACKUP_PATH ) );
         assertEquals( DbRepresentation.of( db ), DbRepresentation.of( BACKUP_PATH ) );
     }
-    
-    private void startDb( String backupConfigValue )
+
+    private void startDb( String backupPort )
     {
-        if ( backupConfigValue == null )
+        db = new EmbeddedGraphDatabase( PATH, stringMap( "online_backup_enabled", "true", "online_backup_port", backupPort) )
         {
-            db = new EmbeddedGraphDatabase( PATH );
-        }
-        else
-        {
-            db = new EmbeddedGraphDatabase( PATH, stringMap( ENABLE_ONLINE_BACKUP, backupConfigValue ) );
-        }
+            @Override
+            protected StringLogger createStringLogger()
+            {
+                return StringLogger.SYSTEM;
+            }
+        };
         createSomeData( db );
     }
-    
+
     public static int runBackupToolFromOtherJvmToGetExitCode( String... args )
             throws Exception
     {
         List<String> allArgs = new ArrayList<String>( Arrays.asList( "java", "-cp", System.getProperty( "java.class.path" ), BackupTool.class.getName() ) );
         allArgs.addAll( Arrays.asList( args ) );
-        
-        Process p = Runtime.getRuntime().exec( allArgs.toArray( new String[allArgs.size()] ));
-        List<Thread> threads = new LinkedList<Thread>();
-        launchStreamConsumers(threads, p);
-        
-        int toReturn = p.waitFor();
-        for (Thread t : threads)
-            t.join();
-        return toReturn;
-    }
 
-    private static void launchStreamConsumers( List<Thread> join, Process p )
-    {
-        InputStream outStr = p.getInputStream();
-        InputStream errStr = p.getErrorStream();
-        Thread out = new Thread( new StreamConsumer( outStr, System.out ) );
-        join.add( out );
-        Thread err = new Thread( new StreamConsumer( errStr, System.err ) );
-        join.add( err );
-        out.start();
-        err.start();
+        Process p = Runtime.getRuntime().exec( allArgs.toArray( new String[allArgs.size()] ));
+        ProcessStreamHandler streams = new ProcessStreamHandler( p );
+        streams.launch();
+        int toReturn = p.waitFor();
+        streams.done();
+        return toReturn;
     }
 }

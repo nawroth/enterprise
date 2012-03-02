@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -31,6 +31,7 @@ import org.neo4j.com.Protocol;
 import org.neo4j.com.RequestType;
 import org.neo4j.com.Server;
 import org.neo4j.com.SlaveContext;
+import org.neo4j.com.TxChecksumVerifier;
 import org.neo4j.kernel.ha.MasterClient.HaRequestType;
 import org.neo4j.kernel.impl.util.StringLogger;
 
@@ -40,27 +41,32 @@ import org.neo4j.kernel.impl.util.StringLogger;
  */
 public class MasterServer extends Server<Master, Void>
 {
-    static final byte PROTOCOL_VERSION = 1;
-    
+    /* Version 1 first version
+     * Version 2 since 2012-01-24
+     * Version 3 since 2012-02-16 */
+    static final byte PROTOCOL_VERSION = 3;
+
     static final int FRAME_LENGTH = Protocol.DEFAULT_FRAME_LENGTH;
-    
-    public MasterServer( Master realMaster, final int port, StringLogger logger )
+
+    public MasterServer( Master realMaster, final int port, StringLogger logger, int maxConcurrentTransactions,
+            int oldChannelThreshold, TxChecksumVerifier txVerifier )
     {
-        super( realMaster, port, logger, FRAME_LENGTH, PROTOCOL_VERSION );
+        super( realMaster, port, logger, FRAME_LENGTH, PROTOCOL_VERSION, maxConcurrentTransactions,
+                oldChannelThreshold, txVerifier );
     }
-    
+
     @Override
     protected RequestType<Master> getRequestContext( byte id )
     {
         return HaRequestType.values()[id];
     }
-    
+
     @Override
     protected void finishOffChannel( Channel channel, SlaveContext context )
     {
         getMaster().finishTransaction( context, false );
     }
-    
+
     @Override
     public void shutdown()
     {

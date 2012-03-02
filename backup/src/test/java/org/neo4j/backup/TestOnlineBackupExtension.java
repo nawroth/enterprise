@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2002-2011 "Neo Technology,"
+ * Copyright (c) 2002-2012 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -21,7 +21,6 @@ package org.neo4j.backup;
 
 import java.util.Map;
 
-import org.neo4j.kernel.Config;
 import org.neo4j.kernel.KernelExtensionContractTest;
 
 public class TestOnlineBackupExtension extends KernelExtensionContractTest<BackupServer, OnlineBackupExtension>
@@ -37,7 +36,8 @@ public class TestOnlineBackupExtension extends KernelExtensionContractTest<Backu
         Map<String, String> configuration = super.configuration( shouldLoad, instance );
         if ( shouldLoad )
         {
-            configuration.put( Config.ENABLE_ONLINE_BACKUP, "port=" + ( BackupServer.DEFAULT_PORT + instance ) );
+            configuration.put( "online_backup_enabled", "true");
+            configuration.put( "online_backup_port", BackupServer.DEFAULT_PORT+instance+"" );
         }
         return configuration;
     }
