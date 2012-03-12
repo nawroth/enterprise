@@ -26,29 +26,29 @@ import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import static org.neo4j.kernel.Config.ENABLE_ONLINE_BACKUP;
 
 import java.io.File;
+import java.io.FilenameFilter;
 import java.util.Map;
 
 import org.apache.commons.io.FileUtils;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.neo4j.com.ComException;
 import org.neo4j.graphdb.DynamicRelationshipType;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Transaction;
-import org.neo4j.graphdb.TransactionFailureException;
 import org.neo4j.graphdb.index.Index;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.Config;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.kernel.GraphDatabaseSPI;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.test.DbRepresentation;
+import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.subprocess.SubProcess;
 
-@Ignore("Needs fixing after refactoring")
 public class TestBackup
 {
     private final String serverPath = "target/var/serverdb";
@@ -100,6 +100,123 @@ public class TestBackup
             // Good
         }
         shutdownServer( server );
+    }
+
+    @Test
+    public void backupLeavesLastTxInLog() throws Exception
+    {
+        GraphDatabaseSPI db = null;
+        ServerInterface server = null;
+        try
+        {
+            String serverDir = TargetDirectory.forTest( getClass() ).directory(
+                    "txinlog-server", true ).getAbsolutePath();
+            String backupDir = TargetDirectory.forTest( getClass() ).directory(
+                    "txinlog-backup", true ).getAbsolutePath();
+            createInitialDataSet( serverDir );
+            server = startServer( serverDir );
+            OnlineBackup backup = OnlineBackup.from( "localhost" );
+            backup.full( backupDir );
+            shutdownServer( server );
+            server = null;
+
+            db = new EmbeddedGraphDatabase( backupDir );
+            for ( XaDataSource ds : db.getXaDataSourceManager().getAllRegisteredDataSources() )
+            {
+                ds.getMasterForCommittedTx( ds.getLastCommittedTxId() );
+            }
+            db.shutdown();
+
+            addMoreData( serverDir );
+            server = startServer( serverDir );
+            backup.incremental( backupDir );
+            shutdownServer( server );
+            server = null;
+
+            db = new EmbeddedGraphDatabase( backupDir );
+            for ( XaDataSource ds : db.getXaDataSourceManager().getAllRegisteredDataSources() )
+            {
+                ds.getMasterForCommittedTx( ds.getLastCommittedTxId() );
+            }
+        }
+        finally
+        {
+            if ( db != null )
+            {
+                db.shutdown();
+            }
+            if ( server != null )
+            {
+                shutdownServer( server );
+            }
+        }
+    }
+
+    @Test
+    public void incrementalBackupLeavesOnlyLastTxInLog() throws Exception
+    {
+        GraphDatabaseSPI db = null;
+        ServerInterface server = null;
+        try
+        {
+            String serverDir = TargetDirectory.forTest( getClass() ).directory(
+                    "txinlog2-server", true ).getAbsolutePath();
+            String backupDir = TargetDirectory.forTest( getClass() ).directory(
+                    "txinlog2-backup", true ).getAbsolutePath();
+            createInitialDataSet( serverDir );
+            server = startServer( serverDir );
+            OnlineBackup backup = OnlineBackup.from( "localhost" );
+            backup.full( backupDir );
+            shutdownServer( server );
+            server = null;
+
+            addMoreData( serverDir );
+            server = startServer( serverDir );
+            backup.incremental( backupDir );
+            shutdownServer( server );
+            server = null;
+
+            // do 2 rotations, add two empty logs
+            new EmbeddedGraphDatabase( backupDir ).shutdown();
+            new EmbeddedGraphDatabase( backupDir ).shutdown();
+
+            addMoreData( serverDir );
+            server = startServer( serverDir );
+            backup.incremental( backupDir );
+            shutdownServer( server );
+            server = null;
+
+            int logsFound = new File( backupDir ).listFiles( new FilenameFilter()
+            {
+                @Override
+                public boolean accept( File dir, String name )
+                {
+                    return name.startsWith( "nioneo_logical.log" )
+                           && !name.endsWith( "active" );
+                }
+            } ).length;
+
+            // 2 one the real and the other from the rotation of shutdown
+            assertEquals( 2, logsFound );
+
+            db = new EmbeddedGraphDatabase( backupDir );
+
+            for ( XaDataSource ds : db.getXaDataSourceManager().getAllRegisteredDataSources() )
+            {
+                ds.getMasterForCommittedTx( ds.getLastCommittedTxId() );
+            }
+        }
+        finally
+        {
+            if ( db != null )
+            {
+                db.shutdown();
+            }
+            if ( server != null )
+            {
+                shutdownServer( server );
+            }
+        }
     }
 
     @Test
@@ -288,7 +405,6 @@ public class TestBackup
     }
 
     @Test
-    // @Ignore
     public void backupIndexWithNoCommits() throws Exception
     {
         GraphDatabaseService db = null;
@@ -342,7 +458,7 @@ public class TestBackup
         FileUtils.deleteDirectory( new File( backupPath ) );
         OnlineBackup.from( "localhost" ).full( backupPath );
         assertEquals( DbRepresentation.of( db ), DbRepresentation.of( backupPath ) );
-        
+
         tx = db.beginTx();
         index.add( node, key, value );
         tx.success();
@@ -352,7 +468,7 @@ public class TestBackup
         assertEquals( DbRepresentation.of( db ), DbRepresentation.of( backupPath ) );
         db.shutdown();
     }
-    
+
     @Test
     public void shouldRetainFileLocksAfterFullBackupOnLiveDatabase() throws Exception
     {
@@ -370,7 +486,7 @@ public class TestBackup
             db.shutdown();
         }
     }
-    
+
     private Map<String, String> configForBackup()
     {
         return MapUtil.stringMap( Config.ENABLE_ONLINE_BACKUP, "true" );
@@ -383,7 +499,7 @@ public class TestBackup
             new EmbeddedGraphDatabase( path ).shutdown();
             fail( "Could start up database in same process, store not locked" );
         }
-        catch ( TransactionFailureException ex )
+        catch ( IllegalStateException ex )
         {
             // expected
         }
@@ -428,7 +544,7 @@ public class TestBackup
             {
                 db = new EmbeddedGraphDatabase( path );
             }
-            catch ( TransactionFailureException ex )
+            catch ( IllegalStateException ex )
             {
                 state = ex;
                 return;
