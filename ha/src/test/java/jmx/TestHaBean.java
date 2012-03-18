@@ -24,6 +24,17 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.io.Writer;
+import java.lang.management.ManagementFactory;
+import java.util.Set;
+
+import javax.management.MBeanAttributeInfo;
+import javax.management.MBeanInfo;
+import javax.management.MBeanOperationInfo;
+import javax.management.MBeanParameterInfo;
+import javax.management.MBeanServer;
+import javax.management.ObjectInstance;
+import javax.management.ObjectName;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -39,6 +50,7 @@ import org.neo4j.management.BranchedStore;
 import org.neo4j.management.HighAvailability;
 import org.neo4j.management.InstanceInfo;
 import org.neo4j.management.Neo4jManager;
+import org.neo4j.test.AsciiDocGenerator;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.ha.LocalhostZooKeeperCluster;
 
@@ -126,5 +138,96 @@ public class TestHaBean
         assertEquals( 1, instances.length );
         assertEquals( instance.getAddress(), instances[0].getAddress() );
         assertEquals( instance.getInstanceId(), instances[0].getInstanceId() );
+    }
+
+    @Test
+    public void dumpJmxInfo() throws Exception
+    {
+        StringBuilder beanInfo = new StringBuilder( 2048 );
+        StringBuilder beanList = new StringBuilder( 2048 );
+        MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
+        Set<ObjectInstance> beans = mBeanServer
+                .queryMBeans( new ObjectName( "org.neo4j:*" ),
+                        null );
+        for ( ObjectInstance bean : beans )
+        {
+            String name = bean.getObjectName()
+                    .getKeyProperty( "name" );
+            String name0 = bean.getObjectName()
+                    .getKeyProperty( "name0" );
+            if ( name0 != null )
+            {
+                name += " -- " + name0;
+            }
+            beanInfo.append( name );
+            beanInfo.append( " (" );
+            beanInfo.append( bean.getClassName() );
+            beanInfo.append( ")\n" );
+            ObjectName objectName = bean.getObjectName();
+            beanList.append( objectName );
+            beanList.append( '|' );
+            MBeanInfo info = mBeanServer.getMBeanInfo( objectName );
+            String description = info.getDescription()
+                    .replace( '\n', ' ' );
+            beanList.append( description );
+            beanList.append( '\n' );
+            beanInfo.append( description );
+            beanInfo.append( '\n' );
+            for ( MBeanAttributeInfo attrInfo : info.getAttributes() )
+            {
+                beanInfo.append( attrInfo.getName() );
+                beanInfo.append( '|' );
+                beanInfo.append( attrInfo.getDescription()
+                        .replace( '\n', ' ' ) );
+                beanInfo.append( '|' );
+                beanInfo.append( attrInfo.getType() );
+                beanInfo.append( '|' );
+                beanInfo.append( attrInfo.isReadable() ? '✓' : '✕' );
+                beanInfo.append( '|' );
+                beanInfo.append( attrInfo.isWritable() ? '✓' : '✕' );
+                beanInfo.append( '\n' );
+            }
+            beanInfo.append( '\n' );
+            for ( MBeanOperationInfo operInfo : info.getOperations() )
+            {
+                beanInfo.append( operInfo.getName() );
+                beanInfo.append( '|' );
+                beanInfo.append( operInfo.getDescription()
+                        .replace( '\n', ' ' ) );
+                beanInfo.append( '|' );
+                beanInfo.append( operInfo.getReturnType() );
+                beanInfo.append( '|' );
+                beanInfo.append( operInfo.getImpact() );
+                beanInfo.append( '|' );
+                MBeanParameterInfo[] params = operInfo.getSignature();
+                for ( int i = 0; i < params.length; i++ )
+                {
+                    MBeanParameterInfo param = params[i];
+                    beanInfo.append( param.getName() );
+                    beanInfo.append( ':' );
+                    beanInfo.append( param.getType() );
+                    if ( i != ( params.length - 1 ) )
+                    {
+                        beanInfo.append( ',' );
+                    }
+                }
+                beanInfo.append( '\n' );
+            }
+            beanInfo.append( '\n' );
+        }
+        Writer fw = null;
+        try
+        {
+            fw = AsciiDocGenerator.getFW( "target/docs/ops", "JMX List" );
+            fw.write( beanList.toString() );
+            fw.write( beanInfo.toString() );
+        }
+        finally
+        {
+            if ( fw != null )
+            {
+                fw.close();
+            }
+        }
     }
 }
