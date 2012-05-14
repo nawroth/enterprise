@@ -17,6 +17,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
 package slavetest;
 
 import java.io.File;
@@ -28,31 +29,34 @@ import java.util.concurrent.CountDownLatch;
 
 import org.junit.After;
 import org.junit.Ignore;
-import org.neo4j.com.Client;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
+import org.neo4j.graphdb.factory.GraphDatabaseSetting;
+import org.neo4j.graphdb.factory.GraphDatabaseSettings;
+import org.neo4j.graphdb.index.IndexProvider;
+import org.neo4j.helpers.Service;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.Config;
-import org.neo4j.kernel.ConfigProxy;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
-import org.neo4j.kernel.GraphDatabaseSPI;
-import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.GraphDatabaseAPI;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
-import org.neo4j.kernel.ha.AbstractBroker;
+import org.neo4j.kernel.KernelExtension;
+import org.neo4j.kernel.configuration.Config;
+import org.neo4j.kernel.configuration.ConfigurationDefaults;
 import org.neo4j.kernel.ha.Broker;
 import org.neo4j.kernel.ha.ClusterClient;
 import org.neo4j.kernel.ha.FakeClusterClient;
 import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.FakeSlaveBroker;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.MasterImpl;
-import org.neo4j.kernel.ha.zookeeper.ZooClient;
+import org.neo4j.kernel.impl.cache.CacheProvider;
 import org.neo4j.test.BatchTransaction;
 
 @Ignore( "SingleJvmWithNettyTest covers this and more" )
 public class SingleJvmTest extends AbstractHaTest
 {
     private TestMaster master;
-    private List<GraphDatabaseSPI> haDbs;
+    private List<GraphDatabaseAPI> haDbs;
 
     @After
     public void verifyAndShutdownDbs()
@@ -92,7 +96,7 @@ public class SingleJvmTest extends AbstractHaTest
         }
     }
 
-    protected GraphDatabaseSPI getSlave( int nr )
+    protected GraphDatabaseAPI getSlave( int nr )
     {
         return haDbs.get( nr );
     }
@@ -100,7 +104,7 @@ public class SingleJvmTest extends AbstractHaTest
     @Override
     protected int addDb( Map<String, String> config, boolean awaitStarted )
     {
-        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseSPI>();
+        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseAPI>();
         int machineId = haDbs.size()+1;
         haDbs.add( null );
         startDb( machineId, config, awaitStarted );
@@ -110,7 +114,7 @@ public class SingleJvmTest extends AbstractHaTest
     @Override
     protected void createBigMasterStore( int numberOfMegabytes )
     {
-        GraphDatabaseSPI db = getMaster().getGraphDb();
+        GraphDatabaseAPI db = getMaster().getGraphDb();
         BatchTransaction tx = BatchTransaction.beginBatchTx( db );
         try
         {
@@ -131,13 +135,14 @@ public class SingleJvmTest extends AbstractHaTest
     @Override
     protected void startDb( final int machineId, final Map<String, String> config, boolean awaitStarted )
     {
-        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseSPI>();
+        haDbs = haDbs != null ? haDbs : new ArrayList<GraphDatabaseAPI>();
         File slavePath = dbPath( machineId );
-        final Map<String,String> cfg = new HashMap<String, String>(config);
-        cfg.put( HaConfig.CONFIG_KEY_SERVER_ID, Integer.toString(machineId) );
-        cfg.put( Config.KEEP_LOGICAL_LOGS, "true" );
-        addDefaultReadTimeout( cfg );
-        HighlyAvailableGraphDatabase haGraphDb = new HighlyAvailableGraphDatabase(slavePath.getAbsolutePath(), cfg)
+        final Map<String,String> cfg = new HashMap<String, String>( config );
+        cfg.put( HaSettings.server_id.name(), Integer.toString(machineId) );
+        cfg.put( GraphDatabaseSettings.keep_logical_logs.name(), GraphDatabaseSetting.TRUE );
+        addDefaultConfig( cfg );
+        HighlyAvailableGraphDatabase haGraphDb = new HighlyAvailableGraphDatabase(slavePath.getAbsolutePath(), cfg, 
+                Service.load( IndexProvider.class ), Service.load( KernelExtension.class ), Service.load( CacheProvider.class ) )
         {
             @Override
             protected Broker createBroker()
@@ -169,8 +174,9 @@ public class SingleJvmTest extends AbstractHaTest
     @Override
     protected void startUpMaster( Map<String, String> extraConfig ) throws Exception
     {
-        ZooClient.Configuration zooConfig = ConfigProxy.config( extraConfig , ZooClient.Configuration.class );
-        int timeOut = zooConfig.lock_read_timeout( zooConfig.read_timeout( Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS ) );
+        extraConfig = new ConfigurationDefaults( HaSettings.class ).apply( extraConfig );
+
+        int timeOut = Integer.parseInt(extraConfig.containsKey( HaSettings.lock_read_timeout.name() ) ? extraConfig.get( HaSettings.lock_read_timeout.name() ) : extraConfig.get( HaSettings.read_timeout.name() ));
         HighlyAvailableGraphDatabase db = startUpMasterDb( extraConfig );
         master = new TestMaster( new MasterImpl( db, timeOut ), db );
     }
@@ -179,11 +185,11 @@ public class SingleJvmTest extends AbstractHaTest
     {
         final int masterId = 0;
         final Map<String, String> config = MapUtil.stringMap( extraConfig,
-                HaConfig.CONFIG_KEY_SERVER_ID, String.valueOf( masterId ) );
-        addDefaultReadTimeout( config );
+                HaSettings.server_id.name(), String.valueOf( masterId ) );
+        addDefaultConfig( config );
         String path = dbPath( 0 ).getAbsolutePath();
         HighlyAvailableGraphDatabase haGraphDb = new HighlyAvailableGraphDatabase(
-            path, config)
+            path, config, Service.load( IndexProvider.class ), Service.load( KernelExtension.class ), Service.load( CacheProvider.class ) )
         {
             @Override
             protected Broker createBroker()
@@ -200,25 +206,19 @@ public class SingleJvmTest extends AbstractHaTest
         return haGraphDb;
     }
 
-    private void addDefaultReadTimeout( Map<String, String> config )
+    protected Broker makeMasterBroker( int masterId, GraphDatabaseAPI graphDb, Map<String, String> config )
     {
-        if (!config.containsKey( HaConfig.CONFIG_KEY_READ_TIMEOUT ))
-        {
-            config.put( HaConfig.CONFIG_KEY_READ_TIMEOUT, String.valueOf( TEST_READ_TIMEOUT ) );
-        }
-    }
+        config = new ConfigurationDefaults(GraphDatabaseSettings.class, HaSettings.class ).apply( config );
+        Config configuration = new Config( config );
 
-    protected Broker makeMasterBroker( int masterId, GraphDatabaseSPI graphDb, Map<String, String> config )
-    {
-        ZooClient.Configuration zooConfig = ConfigProxy.config( config , ZooClient.Configuration.class );
-        AbstractBroker.Configuration brokerConfig = ConfigProxy.config( config , AbstractBroker.Configuration.class );
-
-        return new FakeMasterBroker( brokerConfig, zooConfig);
+        return new FakeMasterBroker( configuration );
     }
 
     protected Broker makeSlaveBroker( TestMaster master, int masterId, int id, HighlyAvailableGraphDatabase graphDb, Map<String, String> config )
     {
-        return new FakeSlaveBroker( master, masterId, ConfigProxy.config( config, AbstractBroker.Configuration.class ) );
+        config = new ConfigurationDefaults(GraphDatabaseSettings.class, HaSettings.class ).apply( config );
+        Config configuration = new Config( config );
+        return new FakeSlaveBroker( master, masterId, configuration );
     }
 
     protected ClusterClient makeMasterClusterClientFromBroker( Broker broker )
@@ -239,7 +239,8 @@ public class SingleJvmTest extends AbstractHaTest
             {
                 haDb.shutdown();
             }
-        master.getGraphDb().shutdown();
+        
+        shutdownMaster();
     }
 
     @Override
@@ -280,7 +281,7 @@ public class SingleJvmTest extends AbstractHaTest
         {
             public void doShutdown()
             {
-                master.getGraphDb().shutdown();
+                shutdownMaster();
             }
         };
     }
@@ -338,5 +339,16 @@ public class SingleJvmTest extends AbstractHaTest
             {
             }
         };
+    }
+
+    protected void shutdownMaster()
+    {
+        getMasterHaDb().shutdown();
+        getMaster().shutdown();
+    }
+
+    protected HighlyAvailableGraphDatabase getMasterHaDb()
+    {
+        return (HighlyAvailableGraphDatabase) getMaster().getGraphDb();
     }
 }

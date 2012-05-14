@@ -17,17 +17,13 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.backup;
 
-import static org.junit.Assert.assertEquals;
-import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.Config.osIsWindows;
+package org.neo4j.backup;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-
 import org.apache.commons.io.FileUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -36,10 +32,13 @@ import org.neo4j.graphdb.DynamicRelationshipType;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Transaction;
-import org.neo4j.kernel.EmbeddedGraphDatabase;
-import org.neo4j.kernel.impl.util.StringLogger;
+import org.neo4j.graphdb.factory.GraphDatabaseFactory;
+import org.neo4j.graphdb.factory.GraphDatabaseSetting;
 import org.neo4j.test.DbRepresentation;
 import org.neo4j.test.ProcessStreamHandler;
+
+import static org.junit.Assert.*;
+import static org.neo4j.graphdb.factory.GraphDatabaseSetting.*;
 
 public class TestBackupToolEmbedded
 {
@@ -155,14 +154,9 @@ public class TestBackupToolEmbedded
 
     private void startDb( String backupPort )
     {
-        db = new EmbeddedGraphDatabase( PATH, stringMap( "online_backup_enabled", "true", "online_backup_port", backupPort) )
-        {
-            @Override
-            protected StringLogger createStringLogger()
-            {
-                return StringLogger.SYSTEM;
-            }
-        };
+        db = new GraphDatabaseFactory().newEmbeddedDatabaseBuilder( PATH ).
+            setConfig( OnlineBackupSettings.online_backup_enabled, GraphDatabaseSetting.TRUE ).
+            setConfig( OnlineBackupSettings.online_backup_port, backupPort ).newGraphDatabase();
         createSomeData( db );
     }
 
@@ -172,11 +166,7 @@ public class TestBackupToolEmbedded
         List<String> allArgs = new ArrayList<String>( Arrays.asList( "java", "-cp", System.getProperty( "java.class.path" ), BackupTool.class.getName() ) );
         allArgs.addAll( Arrays.asList( args ) );
 
-        Process p = Runtime.getRuntime().exec( allArgs.toArray( new String[allArgs.size()] ));
-        ProcessStreamHandler streams = new ProcessStreamHandler( p );
-        streams.launch();
-        int toReturn = p.waitFor();
-        streams.done();
-        return toReturn;
+        Process process = Runtime.getRuntime().exec( allArgs.toArray( new String[allArgs.size()] ));
+        return new ProcessStreamHandler( process, false ).waitForResult();
     }
 }

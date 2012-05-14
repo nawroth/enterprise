@@ -21,13 +21,11 @@ package org.neo4j.kernel.ha;
 
 import javax.transaction.Transaction;
 
-import org.neo4j.com.ComException;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.kernel.DeadlockDetectedException;
-import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.kernel.impl.core.GraphProperties;
 import org.neo4j.kernel.impl.core.NodeManager.IndexLock;
 import org.neo4j.kernel.impl.transaction.IllegalResourceException;
@@ -40,23 +38,24 @@ public class SlaveLockManager extends LockManager
 {
     private final Broker broker;
     private final TxManager tm;
-    private final ResponseReceiver receiver;
+    private final SlaveDatabaseOperations databaseOperations;
     private final TxHook txHook;
-    
-    public SlaveLockManager( RagManager ragManager, TxManager tm, TxHook txHook, Broker broker, ResponseReceiver receiver )
+
+    public SlaveLockManager( RagManager ragManager, TxManager tm, TxHook txHook, Broker broker,
+            SlaveDatabaseOperations databaseOperations )
     {
         super( ragManager );
         this.tm = tm;
         this.txHook = txHook;
         this.broker = broker;
-        this.receiver = receiver;
+        this.databaseOperations = databaseOperations;
     }
 
     private int getLocalTxId()
     {
         return tm.getEventIdentifier();
     }
-    
+
     @Override
     public void getReadLock( Object resource ) throws DeadlockDetectedException,
             IllegalResourceException
@@ -74,14 +73,14 @@ public class SlaveLockManager extends LockManager
                 super.getReadLock( resource );
                 return;
             }
-            
+
             initializeTxIfFirst();
             LockResult result = null;
             do
             {
                 int eventIdentifier = getLocalTxId();
-                result = receiver.receive( grabber.acquireLock( broker.getMaster().first(),
-                        receiver.getSlaveContext( eventIdentifier ), resource ) );
+                result = databaseOperations.receive( grabber.acquireLock( broker.getMaster().first(),
+                        databaseOperations.getSlaveContext( eventIdentifier ), resource ) );
                 switch ( result.getStatus() )
                 {
                 case OK_LOCKED:
@@ -93,14 +92,9 @@ public class SlaveLockManager extends LockManager
             }
             while ( result.getStatus() == LockStatus.NOT_LOCKED );
         }
-        catch ( ZooKeeperException e )
+        catch ( RuntimeException e )
         {
-            receiver.newMaster( e );
-            throw e;
-        }
-        catch ( ComException e )
-        {
-            receiver.newMaster( e );
+            databaseOperations.exceptionHappened( e );
             throw e;
         }
     }
@@ -131,14 +125,14 @@ public class SlaveLockManager extends LockManager
                 super.getWriteLock( resource );
                 return;
             }
-            
+
             initializeTxIfFirst();
             LockResult result = null;
             do
             {
                 int eventIdentifier = getLocalTxId();
-                result = receiver.receive( grabber.acquireLock( broker.getMaster().first(),
-                        receiver.getSlaveContext( eventIdentifier ), resource ) );
+                result = databaseOperations.receive( grabber.acquireLock( broker.getMaster().first(),
+                        databaseOperations.getSlaveContext( eventIdentifier ), resource ) );
                 switch ( result.getStatus() )
                 {
                 case OK_LOCKED:
@@ -150,22 +144,17 @@ public class SlaveLockManager extends LockManager
             }
             while ( result.getStatus() == LockStatus.NOT_LOCKED );
         }
-        catch ( ZooKeeperException e )
+        catch ( RuntimeException e )
         {
-            receiver.newMaster( e );
-            throw e;
-        }
-        catch ( ComException e )
-        {
-            receiver.newMaster( e );
+            databaseOperations.exceptionHappened( e );
             throw e;
         }
     }
-    
+
     // Release lock is as usual, since when the master committs it will release
     // the locks there and then when this slave committs it will release its
     // locks as usual here.
-    
+
     private static enum LockGrabber
     {
         NODE_READ
@@ -234,7 +223,7 @@ public class SlaveLockManager extends LockManager
                 return master.acquireIndexReadLock( context, lock.getIndex(), lock.getKey() );
             }
         };
-        
+
         abstract Response<LockResult> acquireLock( Master master, SlaveContext context, Object resource );
     }
 }

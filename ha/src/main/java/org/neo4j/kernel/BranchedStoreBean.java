@@ -17,10 +17,10 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
 package org.neo4j.kernel;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
@@ -28,7 +28,6 @@ import java.util.List;
 import javax.management.NotCompliantMBeanException;
 
 import org.neo4j.helpers.Service;
-import org.neo4j.jmx.impl.KernelBean;
 import org.neo4j.jmx.impl.ManagementBeanProvider;
 import org.neo4j.jmx.impl.ManagementData;
 import org.neo4j.jmx.impl.Neo4jMBean;
@@ -72,7 +71,6 @@ public final class BranchedStoreBean extends ManagementBeanProvider
             BranchedStore
     {
         private final File storePath;
-        private static final FilenameFilter branchedDataDirectoryFilenameFilter = new BranchedDataDirectoryFilenameFilter();
 
         protected BranchedStoreImpl( ManagementData management )
                                                                 throws NotCompliantMBeanException
@@ -89,7 +87,7 @@ public final class BranchedStoreBean extends ManagementBeanProvider
 
         private File extractStorePath( ManagementData management )
         {
-            NeoStoreXaDataSource nioneodb = KernelBean.getNeoDataSource( management.getKernelData() );
+            NeoStoreXaDataSource nioneodb = management.getKernelData().graphDatabase().getXaDataSourceManager().getNeoStoreDataSource();
             File path;
             try
             {
@@ -106,35 +104,21 @@ public final class BranchedStoreBean extends ManagementBeanProvider
         public BranchedStoreInfo[] getBranchedStores()
         {
             List<BranchedStoreInfo> toReturn = new LinkedList<BranchedStoreInfo>();
-            for ( String filename : storePath.list( branchedDataDirectoryFilenameFilter ) )
+            for ( File branchDirectory : BranchedDataPolicy.getBranchedDataRootDirectory( storePath.getAbsolutePath() ).listFiles() )
             {
-                toReturn.add( parseBranchedStore( filename ) );
+                if ( !branchDirectory.isDirectory() )
+                    continue;
+                toReturn.add( parseBranchedStore( branchDirectory ) );
             }
             return toReturn.toArray( new BranchedStoreInfo[] {} );
         }
 
-        private BranchedStoreInfo parseBranchedStore(
-                String branchedStoreDirName )
+        private BranchedStoreInfo parseBranchedStore( File branchDirectory )
         {
-            File theDir = new File( storePath, branchedStoreDirName );
-            File theNeostoreFile = new File( theDir, NeoStore.DEFAULT_NAME );
-
-            String timestampFromFilename = branchedStoreDirName.substring( BranchedDataPolicy.BRANCH_PREFIX.length() );
-            long timestamp = Long.parseLong( timestampFromFilename );
-
-            long txId = NeoStore.getTxId( CommonFactories.defaultFileSystemAbstraction(), theNeostoreFile.getAbsolutePath() );
-            return new BranchedStoreInfo( branchedStoreDirName, txId, timestamp );
-        }
-
-        private static final class BranchedDataDirectoryFilenameFilter
-                implements FilenameFilter
-        {
-            @Override
-            public boolean accept( File dir, String name )
-            {
-                return new File( dir, name ).isDirectory()
-                       && name.startsWith( BranchedDataPolicy.BRANCH_PREFIX );
-            }
+            File neostoreFile = new File( branchDirectory, NeoStore.DEFAULT_NAME );
+            long txId = NeoStore.getTxId( new DefaultFileSystemAbstraction(), neostoreFile.getAbsolutePath() );
+            long timestamp = Long.parseLong( branchDirectory.getName() );
+            return new BranchedStoreInfo( branchDirectory.getName(), txId, timestamp );
         }
     }
 }

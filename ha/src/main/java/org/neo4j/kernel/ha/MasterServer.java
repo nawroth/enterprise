@@ -70,8 +70,14 @@ public class MasterServer extends Server<Master, Void>
     @Override
     public void shutdown()
     {
-        super.shutdown();
         getMaster().shutdown();
+        super.shutdown();
+    }
+    
+    @Override
+    protected boolean shouldLogFailureToFinishOffChannel( Throwable failure )
+    {
+        return !( failure instanceof UnableToResumeTransactionException );
     }
 
     public Map<Integer, Collection<SlaveContext>> getSlaveInformation()

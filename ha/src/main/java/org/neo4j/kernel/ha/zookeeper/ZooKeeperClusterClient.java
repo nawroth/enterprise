@@ -17,26 +17,27 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.kernel.ha.zookeeper;
 
-import static org.neo4j.com.Server.DEFAULT_BACKUP_PORT;
+package org.neo4j.kernel.ha.zookeeper;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
-
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooKeeper;
 import org.neo4j.com.Client;
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.configuration.ConfigurationDefaults;
 import org.neo4j.kernel.ha.ClusterClient;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
+
+import static org.neo4j.com.Server.*;
 
 public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements ClusterClient
 {
@@ -49,7 +50,7 @@ public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements 
 
     public ZooKeeperClusterClient( String zooKeeperServers )
     {
-        this( zooKeeperServers, HaConfig.CONFIG_DEFAULT_HA_CLUSTER_NAME );
+        this( zooKeeperServers, ConfigurationDefaults.getDefault( HaSettings.cluster_name, HaSettings.class));
     }
 
 //    public ZooKeeperClusterClient( String zooKeeperServers,
@@ -67,7 +68,7 @@ public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements 
     public ZooKeeperClusterClient( String zooKeeperServers, String clusterName )
     {
         this( zooKeeperServers, StringLogger.SYSTEM, clusterName,
-                HaConfig.CONFIG_DEFAULT_ZK_SESSION_TIMEOUT );
+                Integer.parseInt( ConfigurationDefaults.getDefault( HaSettings.zk_session_timeout, HaSettings.class ) ));
     }
 
     public ZooKeeperClusterClient( String zooKeeperServers, StringLogger msgLog, String clusterName,
@@ -89,8 +90,9 @@ public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements 
                 "Unable to create zoo keeper client", e );
         }
     }
-    
-    public void waitForSyncConnected()
+
+    @Override
+    void waitForSyncConnected( WaitMode waitMode )
     {
         long startTime = System.currentTimeMillis();
         while ( System.currentTimeMillis() - startTime < getSessionTimeout() )
@@ -151,17 +153,19 @@ public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements 
     {
         waitForSyncConnected();
         StoreId storeId = getClusterStoreId( zooKeeper, clusterName );
-        if ( storeId == null )
+        if( storeId == null )
+        {
             throw new RuntimeException( "Cluster '" + clusterName + "' not found" );
+        }
         return asRootPath( storeId );
     }
-    
+
     @Override
     protected int getMyMachineId()
     {
         throw new UnsupportedOperationException();
     }
-    
+
     /**
      * Returns the disconnected slaves in this cluster so that all slaves
      * which are specified in the HA servers configuration, but not in the
@@ -195,7 +199,10 @@ public class ZooKeeperClusterClient extends AbstractZooKeeperManager implements 
     @Override
     public ZooKeeper getZooKeeper( boolean sync )
     {
-        if ( sync ) this.zooKeeper.sync( getRoot(), null, null );
+        if( sync )
+        {
+            this.zooKeeper.sync( getRoot(), null, null );
+        }
         return this.zooKeeper;
     }
 

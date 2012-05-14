@@ -21,8 +21,6 @@ package org.neo4j.kernel.ha;
 
 import javax.transaction.TransactionManager;
 
-import org.neo4j.com.ComException;
-import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.kernel.impl.core.RelationshipTypeCreator;
 import org.neo4j.kernel.impl.core.RelationshipTypeHolder;
 import org.neo4j.kernel.impl.persistence.EntityIdGenerator;
@@ -32,31 +30,26 @@ import org.neo4j.kernel.impl.transaction.TxManager;
 public class SlaveRelationshipTypeCreator implements RelationshipTypeCreator
 {
     private final Broker broker;
-    private final ResponseReceiver receiver;
+    private final SlaveDatabaseOperations databaseOperations;
 
-    public SlaveRelationshipTypeCreator( Broker broker, ResponseReceiver receiver )
+    public SlaveRelationshipTypeCreator( Broker broker, SlaveDatabaseOperations databaseOperations )
     {
         this.broker = broker;
-        this.receiver = receiver;
+        this.databaseOperations = databaseOperations;
     }
-    
+
     public int getOrCreate( TransactionManager txManager, EntityIdGenerator idGenerator,
             PersistenceManager persistence, RelationshipTypeHolder relTypeHolder, String name )
     {
         try
         {
             int eventIdentifier = ((TxManager) txManager).getEventIdentifier();
-            return receiver.receive( broker.getMaster().first().createRelationshipType(
-                    receiver.getSlaveContext( eventIdentifier ), name ) );
+            return databaseOperations.receive( broker.getMaster().first().createRelationshipType(
+                    databaseOperations.getSlaveContext( eventIdentifier ), name ) );
         }
-        catch ( ZooKeeperException e )
+        catch ( RuntimeException e )
         {
-            receiver.newMaster( e );
-            throw e;
-        }
-        catch ( ComException e )
-        {
-            receiver.newMaster( e );
+            databaseOperations.exceptionHappened( e );
             throw e;
         }
     }

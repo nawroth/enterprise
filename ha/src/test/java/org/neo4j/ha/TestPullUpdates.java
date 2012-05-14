@@ -22,17 +22,16 @@ package org.neo4j.ha;
 import static java.lang.System.currentTimeMillis;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import static org.neo4j.test.TargetDirectory.forTest;
-import static org.neo4j.test.ha.LocalhostZooKeeperCluster.standardZoo;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.neo4j.com.ComException;
 import org.neo4j.graphdb.Transaction;
-import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.EnterpriseGraphDatabaseFactory;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperClusterClient;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.ha.LocalhostZooKeeperCluster;
@@ -47,24 +46,28 @@ public class TestPullUpdates
     @Before
     public void doBefore() throws Exception
     {
-        zoo = standardZoo( getClass() );
-        for ( int i = 0; i < dbs.length; i++ ) dbs[i] = newDb( i );
+        zoo = LocalhostZooKeeperCluster.singleton().clearDataAndVerifyConnection();
+        for ( int i = 0; i < dbs.length; i++ )
+            dbs[i] = newDb( i );
     }
 
     private HighlyAvailableGraphDatabase newDb( int i )
     {
-        return new HighlyAvailableGraphDatabase( dir.directory( "" + i, true ).getAbsolutePath(), stringMap(
-                HaConfig.CONFIG_KEY_SERVER_ID, "" + i,
-                HaConfig.CONFIG_KEY_SERVER, "localhost:" + (6666+i),
-                HaConfig.CONFIG_KEY_COORDINATORS, zoo.getConnectionString(),
-                HaConfig.CONFIG_KEY_PULL_INTERVAL, PULL_INTERVAL + "ms" ) );
+        return (HighlyAvailableGraphDatabase) new EnterpriseGraphDatabaseFactory().
+            newHighlyAvailableDatabaseBuilder( dir.directory( "" + i, true ).getAbsolutePath() ).
+            setConfig( HaSettings.server_id, ""+i ).
+            setConfig( HaSettings.server, "localhost:" + (6666+i) ).
+            setConfig( HaSettings.coordinators, zoo.getConnectionString() ).
+            setConfig( HaSettings.pull_interval, PULL_INTERVAL+"ms" ).
+            newGraphDatabase();
     }
 
     @After
     public void doAfter() throws Exception
     {
-        for ( HighlyAvailableGraphDatabase db : dbs ) if ( db != null ) db.shutdown();
-        zoo.shutdown();
+        for ( HighlyAvailableGraphDatabase db : dbs )
+            if ( db != null )
+                db.shutdown();
     }
     
     @Test

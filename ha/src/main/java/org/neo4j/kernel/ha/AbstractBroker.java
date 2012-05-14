@@ -19,24 +19,19 @@
  */
 package org.neo4j.kernel.ha;
 
-import org.neo4j.kernel.ConfigurationPrefix;
+import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.KernelData;
+import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
 
 public abstract class AbstractBroker implements Broker
 {
-    @ConfigurationPrefix( "ha." )
-    public interface Configuration
-    {
-        int server_id();
-    }
-    
     private static final StoreId storeId = new StoreId();
-    private Configuration config;
+    protected Config config;
 
-    public AbstractBroker( Configuration config)
+    public AbstractBroker( Config config)
     {
         this.config = config;
     }
@@ -45,15 +40,15 @@ public abstract class AbstractBroker implements Broker
     {
         // Do nothing
     }
-    
-    protected Configuration getConfig()
+
+    protected Config getConfig()
     {
         return config;
     }
 
     public int getMyMachineId()
     {
-        return config.server_id();
+        return config.getInteger( HaSettings.server_id );
     }
 
     @Override
@@ -103,7 +98,7 @@ public abstract class AbstractBroker implements Broker
                                                  + " does not support ConnectionInformation" );
     }
 
-    public StoreId getClusterStoreId()
+    public StoreId getClusterStoreId( boolean firstTime )
     {
         return storeId;
     }
@@ -112,5 +107,11 @@ public abstract class AbstractBroker implements Broker
     public void logStatus( StringLogger msgLog )
     {
         // defult: log nothing
+    }
+
+    @Override
+    public Pair<Master, Machine> bootstrap()
+    {
+        return getMasterReally( true );
     }
 }

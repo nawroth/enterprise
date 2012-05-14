@@ -20,7 +20,7 @@
 package org.neo4j.kernel.ha;
 
 import org.neo4j.helpers.Pair;
-import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.kernel.GraphDatabaseAPI;
 import org.neo4j.kernel.KernelData;
 import org.neo4j.kernel.ha.zookeeper.Machine;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
@@ -41,7 +41,7 @@ public interface Broker
     int getMyMachineId();
 
     // I know... this isn't supposed to be here
-    Object instantiateMasterServer( GraphDatabaseSPI graphDb );
+    Object instantiateMasterServer( GraphDatabaseAPI graphDb );
 
     void rebindMaster();
 
@@ -59,7 +59,20 @@ public interface Broker
 
     ConnectionInformation[] getConnectionInformation();
 
-    StoreId getClusterStoreId();
+    /**
+     * Asks the cluster for and returns the storeId currently shared by the
+     * cluster members or a new one if none is there.
+     *
+     * @param firstTime False if it should timeout after a session interval
+     *            passes -
+     *            expected to be true in the same scenarios where
+     *            {@link #bootstrap()} is called instead of
+     *            {@link #getMasterReally(boolean)}
+     * @return The storeId existing in the cluster or a new one if none is found
+     */
+    StoreId getClusterStoreId( boolean firstTime );
 
     void logStatus( StringLogger msgLog );
+
+    Pair<Master, Machine> bootstrap();
 }

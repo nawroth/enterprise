@@ -21,13 +21,17 @@
 package org.neo4j.kernel.ha;
 
 import java.util.Map;
-
+import org.neo4j.graphdb.index.IndexProvider;
 import org.neo4j.kernel.AbstractGraphDatabase;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.KernelData;
+import org.neo4j.kernel.KernelExtension;
+import org.neo4j.kernel.impl.cache.CacheProvider;
+import org.neo4j.kernel.impl.core.Caches;
 import org.neo4j.kernel.impl.core.NodeProxy;
 import org.neo4j.kernel.impl.core.RelationshipProxy;
-import org.neo4j.kernel.impl.util.StringLogger;
+import org.neo4j.kernel.impl.nioneo.store.StoreId;
+import org.neo4j.kernel.logging.Logging;
 
 /**
  * TODO
@@ -36,25 +40,28 @@ public class AbstractHAGraphDatabase
     extends AbstractGraphDatabase
 {
     protected Broker broker;
-    private StringLogger logger;
     private NodeProxy.NodeLookup nodeLookup;
     private RelationshipProxy.RelationshipLookups relationshipLookups;
     private HighlyAvailableGraphDatabase highlyAvailableGraphDatabase;
+    private final Caches caches;
 
     public AbstractHAGraphDatabase( String storeDir, Map<String, String> params,
-                                    HighlyAvailableGraphDatabase highlyAvailableGraphDatabase,
-                                    Broker broker, StringLogger logger,
+                                    StoreId storeId, HighlyAvailableGraphDatabase highlyAvailableGraphDatabase,
+                                    Broker broker, Logging logging,
                                     NodeProxy.NodeLookup nodeLookup,
-                                    RelationshipProxy.RelationshipLookups relationshipLookups
-    )
+                                    RelationshipProxy.RelationshipLookups relationshipLookups,
+                                    Iterable<IndexProvider> indexProviders, Iterable<KernelExtension> kernelExtensions,
+                                    Iterable<CacheProvider> cacheProviders, Caches caches )
     {
-        super( storeDir, params );
+        super( storeDir, params, indexProviders, kernelExtensions, cacheProviders );
         this.highlyAvailableGraphDatabase = highlyAvailableGraphDatabase;
+        this.caches = caches;
+        this.storeId = storeId;
 
-        assert broker != null && logger != null && nodeLookup != null && relationshipLookups != null;
+        assert broker != null && logging != null && nodeLookup != null && relationshipLookups != null;
 
         this.broker = broker;
-        this.logger = logger;
+        this.logging = logging;
         this.nodeLookup = nodeLookup;
         this.relationshipLookups = relationshipLookups;
     }
@@ -62,7 +69,7 @@ public class AbstractHAGraphDatabase
     @Override
     protected KernelData createKernelData()
     {
-        return new DefaultKernelData(config, this);
+        return new DefaultKernelData( config, this );
     }
 
     @Override
@@ -78,13 +85,25 @@ public class AbstractHAGraphDatabase
     }
 
     @Override
-    protected StringLogger createStringLogger()
+    protected Logging createStringLogger()
     {
-        return logger;
+        return logging;
     }
 
     public HighlyAvailableGraphDatabase getHighlyAvailableGraphDatabase()
     {
         return highlyAvailableGraphDatabase;
+    }
+    
+    @Override
+    public StoreId getStoreId()
+    {
+        return storeId;
+    }
+    
+    @Override
+    protected Caches createCaches()
+    {
+        return caches;
     }
 }

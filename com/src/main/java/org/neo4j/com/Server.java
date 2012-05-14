@@ -19,9 +19,6 @@
  */
 package org.neo4j.com;
 
-import static org.neo4j.com.DechunkingChannelBuffer.assertSameProtocolVersion;
-import static org.neo4j.com.SlaveContext.lastAppliedTx;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
@@ -35,7 +32,6 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-
 import org.jboss.netty.bootstrap.ServerBootstrap;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.buffer.ChannelBuffers;
@@ -58,9 +54,11 @@ import org.neo4j.helpers.Exceptions;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.Triplet;
 import org.neo4j.helpers.collection.IteratorUtil;
-import org.neo4j.kernel.Config;
+import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.util.StringLogger;
+
+import static org.neo4j.com.DechunkingChannelBuffer.*;
 
 /**
  * Sits on the master side, receiving serialized requests from slaves (via
@@ -79,7 +77,7 @@ public abstract class Server<M, R> extends Protocol implements ChannelPipelineFa
 
     private final ChannelFactory channelFactory;
     private final ServerBootstrap bootstrap;
-    private final M realMaster;
+    private M realMaster;
     private final ChannelGroup channelGroup;
     private final Map<Channel, Pair<SlaveContext, AtomicLong /*time last heard of*/>> connectedSlaveChannels =
             new HashMap<Channel, Pair<SlaveContext,AtomicLong>>();
@@ -102,7 +100,7 @@ public abstract class Server<M, R> extends Protocol implements ChannelPipelineFa
 
     private final byte applicationProtocolVersion;
     private final int oldChannelThresholdMillis;
-    private final TxChecksumVerifier txVerifier;
+    private TxChecksumVerifier txVerifier;
     
     public Server( M realMaster, final int port, StringLogger logger, int frameLength, byte applicationProtocolVersion,
             int maxNumberOfConcurrentTransactions, int oldChannelThreshold/*seconds*/, TxChecksumVerifier txVerifier )
@@ -209,12 +207,7 @@ public abstract class Server<M, R> extends Protocol implements ChannelPipelineFa
                 msgLog.logMessage( "Error handling request", e );
                 ctx.getChannel().close();
                 tryToFinishOffChannel( ctx.getChannel() );
-                e.printStackTrace();
-                if ( e instanceof Exception )
-                {
-                    throw (Exception) e;
-                }
-                throw new RuntimeException( e );
+                throw Exceptions.launderedException( e );
             }
         }
 
@@ -267,15 +260,17 @@ public abstract class Server<M, R> extends Protocol implements ChannelPipelineFa
             finishOffChannel( channel, slave );
             unmapSlave( channel, slave );
         }
-        catch ( IllegalStateException e ) // From TxManager.resume (if the tx is already active)
-        {
-            submitSilent( unfinishedTransactionExecutor, newTransactionFinisher( slave ) );
-        }
         catch ( Throwable failure ) // Unknown error trying to finish off the tx
         {
             submitSilent( unfinishedTransactionExecutor, newTransactionFinisher( slave ) );
-            msgLog.logMessage( "Could not finish off dead channel", failure );
+            if ( shouldLogFailureToFinishOffChannel( failure ) )
+                msgLog.logMessage( "Could not finish off dead channel", failure );
         }
+    }
+
+    protected boolean shouldLogFailureToFinishOffChannel( Throwable failure )
+    {
+        return true;
     }
 
     private void submitSilent( ExecutorService service, Runnable job )
@@ -502,7 +497,7 @@ public abstract class Server<M, R> extends Protocol implements ChannelPipelineFa
         for ( int i = 0; i < txsSize; i++ )
         {
             String ds = readString( buffer );
-            Tx tx = lastAppliedTx( ds, buffer.readLong() );
+            Tx tx = SlaveContext.lastAppliedTx( ds, buffer.readLong() );
             lastAppliedTransactions[i] = tx;
             
             // Only perform checksum checks on the neo data source.
@@ -566,6 +561,12 @@ public abstract class Server<M, R> extends Protocol implements ChannelPipelineFa
         channelGroup.close().awaitUninterruptibly();
         executor.shutdown();
         msgLog.logMessage( getClass().getSimpleName() + " shutdown", true );
+        
+        // Set this to null since bootstrap/channelFactory.releaseExternalResources
+        // cannot be called and holds a reference to this Server instance.
+        realMaster = null;
+        txVerifier = null;
+        
         // TODO This should work, but blocks with busy wait sometimes
 //        channelFactory.releaseExternalResources();
     }

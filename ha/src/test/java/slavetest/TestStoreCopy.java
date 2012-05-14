@@ -23,16 +23,15 @@ import java.io.File;
 
 import org.apache.commons.io.FileUtils;
 import org.junit.After;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Transaction;
-import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.HaConfig;
+import org.neo4j.kernel.EnterpriseGraphDatabaseFactory;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.test.TargetDirectory;
 import org.neo4j.test.ha.LocalhostZooKeeperCluster;
@@ -53,16 +52,9 @@ public class TestStoreCopy
     private long nodeId;
 
     @BeforeClass
-    public static void startZoo()
+    public static void startZoo() throws Exception
     {
-        zoo = new LocalhostZooKeeperCluster( TestStoreCopy.class, new int[] {
-                3181, 3182, 3183 } );
-    }
-
-    @AfterClass
-    public static void stopZoo()
-    {
-        zoo.shutdown();
+        zoo = LocalhostZooKeeperCluster.singleton().clearDataAndVerifyConnection();
     }
 
     /**
@@ -78,13 +70,12 @@ public class TestStoreCopy
                 "slave-sandboxed", true );
         sandboxed = new File( slaveDir, HighlyAvailableGraphDatabase.COPY_FROM_MASTER_TEMP );
 
-        master = new HighlyAvailableGraphDatabase(
-                TargetDirectory.forTest( TestStoreCopy.class ).directory(
-                        "master-sandboxed", true ).getAbsolutePath(),
-                MapUtil.stringMap(
-                        HaConfig.CONFIG_KEY_COORDINATORS,
-                        zoo.getConnectionString(),
-                        HaConfig.CONFIG_KEY_SERVER_ID, "1" ) );
+        master = (HighlyAvailableGraphDatabase) new EnterpriseGraphDatabaseFactory().
+            newHighlyAvailableDatabaseBuilder( TargetDirectory.forTest( TestStoreCopy.class ).directory(
+                                    "master-sandboxed", true ).getAbsolutePath() ).
+            setConfig( HaSettings.coordinators, zoo.getConnectionString() ).
+            setConfig( HaSettings.server_id, "1" ).
+            newGraphDatabase();
 
         Transaction masterTx = master.beginTx();
         Node n = master.createNode();
@@ -93,10 +84,11 @@ public class TestStoreCopy
         masterTx.success();
         masterTx.finish();
 
-        slave = new HighlyAvailableGraphDatabase( slaveDir.getAbsolutePath(),
-                MapUtil.stringMap( HaConfig.CONFIG_KEY_COORDINATORS,
-                        zoo.getConnectionString(),
-                        HaConfig.CONFIG_KEY_SERVER_ID, "2" ) );
+        slave = (HighlyAvailableGraphDatabase) new EnterpriseGraphDatabaseFactory().
+            newHighlyAvailableDatabaseBuilder( slaveDir.getAbsolutePath() ).
+            setConfig( HaSettings.coordinators, zoo.getConnectionString() ).
+            setConfig( HaSettings.server_id, "2" ).
+            newGraphDatabase();
 
         Assert.assertEquals( 1,
                 master.getBroker().getMaster().other().getMachineId() );
@@ -160,9 +152,11 @@ public class TestStoreCopy
                 "neostore.propertystore.db" ), sandboxed, false );
         Assert.assertEquals( 3, sandboxed.listFiles().length );
 
-        slave = new HighlyAvailableGraphDatabase( slaveDir.getAbsolutePath(), MapUtil.stringMap(
-                HaConfig.CONFIG_KEY_COORDINATORS, zoo.getConnectionString(),
-                HaConfig.CONFIG_KEY_SERVER_ID, "2" ) );
+        slave = (HighlyAvailableGraphDatabase) new EnterpriseGraphDatabaseFactory().
+            newHighlyAvailableDatabaseBuilder( slaveDir.getAbsolutePath() ).
+            setConfig( HaSettings.coordinators, zoo.getConnectionString() ).
+            setConfig( HaSettings.server_id, "2" ).
+            newGraphDatabase();
 
         Assert.assertEquals( "bar",
                 slave.getNodeById( nodeId ).getProperty( "foo" ) );

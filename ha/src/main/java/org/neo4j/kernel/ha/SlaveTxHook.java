@@ -20,44 +20,36 @@
 package org.neo4j.kernel.ha;
 
 import javax.transaction.Transaction;
-
-import org.neo4j.com.ComException;
-import org.neo4j.kernel.GraphDatabaseSPI;
-import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
+import org.neo4j.kernel.GraphDatabaseAPI;
 import org.neo4j.kernel.impl.transaction.TxHook;
 
 public class SlaveTxHook implements TxHook
 {
     private final Broker broker;
-    private final ResponseReceiver receiver;
-    private GraphDatabaseSPI spi;
+    private final SlaveDatabaseOperations databaseOperations;
+    private GraphDatabaseAPI spi;
 
-    public SlaveTxHook( Broker broker, ResponseReceiver receiver, GraphDatabaseSPI spi )
+    public SlaveTxHook( Broker broker, SlaveDatabaseOperations databaseOperations, GraphDatabaseAPI spi )
     {
         this.broker = broker;
-        this.receiver = receiver;
+        this.databaseOperations = databaseOperations;
         this.spi = spi;
     }
-    
+
     @Override
     public void initializeTransaction( int eventIdentifier )
     {
         try
         {
-            receiver.receive( broker.getMaster().first().initializeTx( receiver.getSlaveContext( eventIdentifier ) ) );
+            databaseOperations.receive( broker.getMaster().first().initializeTx( databaseOperations.getSlaveContext( eventIdentifier ) ) );
         }
-        catch ( ZooKeeperException e )
+        catch ( RuntimeException e )
         {
-            receiver.newMaster( e );
-            throw e;
-        }
-        catch ( ComException e )
-        {
-            receiver.newMaster( e );
+            databaseOperations.exceptionHappened( e );
             throw e;
         }
     }
-    
+
     public boolean hasAnyLocks( Transaction tx )
     {
         return spi.getLockReleaser().hasLocks( tx );
@@ -67,21 +59,16 @@ public class SlaveTxHook implements TxHook
     {
         try
         {
-            receiver.receive( broker.getMaster().first().finishTransaction(
-                    receiver.getSlaveContext( eventIdentifier ), success ) );
+            databaseOperations.receive( broker.getMaster().first().finishTransaction(
+                    databaseOperations.getSlaveContext( eventIdentifier ), success ) );
         }
-        catch ( ZooKeeperException e )
+        catch ( RuntimeException e )
         {
-            receiver.newMaster( e );
-            throw e;
-        }
-        catch ( ComException e )
-        {
-            receiver.newMaster( e );
+            databaseOperations.exceptionHappened( e );
             throw e;
         }
     }
-    
+
     @Override
     public boolean freeIdsDuringRollback()
     {

@@ -17,9 +17,11 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
 package slavetest;
 
 import static java.util.Arrays.asList;
+import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -27,16 +29,20 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_LOCK_READ_TIMEOUT;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_READ_TIMEOUT;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.rmi.RemoteException;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 
 import org.junit.Before;
@@ -44,27 +50,33 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.neo4j.com.Client;
 import org.neo4j.com.Client.ConnectionLostHandler;
+import org.neo4j.com.ComException;
 import org.neo4j.com.Protocol;
+import org.neo4j.graphdb.DynamicRelationshipType;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.NotFoundException;
 import org.neo4j.graphdb.Relationship;
+import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.TransactionFailureException;
+import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.collection.IteratorUtil;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.Config;
-import org.neo4j.kernel.ConfigProxy;
-import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.kernel.GraphDatabaseAPI;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
+import org.neo4j.kernel.configuration.Config;
+import org.neo4j.kernel.configuration.ConfigurationDefaults;
 import org.neo4j.kernel.ha.AbstractBroker;
 import org.neo4j.kernel.ha.Broker;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.Master;
 import org.neo4j.kernel.ha.MasterClient;
 import org.neo4j.kernel.ha.MasterImpl;
 import org.neo4j.kernel.ha.zookeeper.AbstractZooKeeperManager;
 import org.neo4j.kernel.ha.zookeeper.Machine;
+import org.neo4j.kernel.impl.core.RelationshipTypeHolder;
 import org.neo4j.kernel.impl.nioneo.store.NeoStore;
 import org.neo4j.kernel.impl.transaction.LockType;
 import org.neo4j.kernel.impl.transaction.TxManager;
@@ -89,25 +101,24 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
                 "Slave Broker is not a client",
                 ( (HighlyAvailableGraphDatabase) getSlave( 0 ) ).getBroker().getMaster().first() instanceof MasterClient );
     }
-
+    
     @Override
     protected Broker makeSlaveBroker( TestMaster master, int masterId, int id, HighlyAvailableGraphDatabase db, Map<String, String> config )
     {
         config.put( "server_id", Integer.toString( id ) );
-        AbstractBroker.Configuration conf = ConfigProxy.config( config, AbstractBroker.Configuration.class );
-        
+
         final Machine masterMachine = new Machine( masterId, -1, 1, -1,
                 "localhost:" + Protocol.PORT );
-        int readTimeout = getConfigInt( config, CONFIG_KEY_READ_TIMEOUT, TEST_READ_TIMEOUT );
+        int readTimeout = getConfigInt( config, HaSettings.read_timeout.name(), TEST_READ_TIMEOUT );
         final Master client = new MasterClient(
                 masterMachine.getServer().first(),
                 masterMachine.getServer().other(),
                 db.getMessageLog(),
                 db.getStoreIdGetter(),
                 ConnectionLostHandler.NO_ACTION,
-                readTimeout, getConfigInt( config, CONFIG_KEY_LOCK_READ_TIMEOUT, readTimeout ),
+                readTimeout, getConfigInt( config, HaSettings.lock_read_timeout.name(), readTimeout ),
                 Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT);
-        return new AbstractBroker( conf )
+        return new AbstractBroker( new Config( new ConfigurationDefaults(GraphDatabaseSettings.class, HaSettings.class ).apply( config ) ))
         {
             public boolean iAmMaster()
             {
@@ -130,7 +141,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
                 return Pair.of( client, masterMachine );
             }
 
-            public Object instantiateMasterServer( GraphDatabaseSPI graphDb )
+            public Object instantiateMasterServer( GraphDatabaseAPI graphDb )
             {
                 throw new UnsupportedOperationException(
                         "cannot instantiate master server on slave" );
@@ -143,7 +154,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         String value = config.get( key );
         return value != null ? Integer.parseInt( value ) : defaultValue;
     }
-
+    
     @Test
     public void makeSureLogMessagesIsWrittenEvenAfterInternalRestart() throws Exception
     {
@@ -249,15 +260,10 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         }
     }
 
-    private HighlyAvailableGraphDatabase getMasterHaDb()
-    {
-        return (HighlyAvailableGraphDatabase) getMaster().getGraphDb();
-    }
-
     @Test
     public void slaveWriteThatOnlyModifyRelationshipRecordsCanUpdateCachedNodeOnMaster() throws Exception
     {
-        initializeDbs( 1, MapUtil.stringMap( Config.CACHE_TYPE, "strong" ) );
+        initializeDbs( 1, MapUtil.stringMap( GraphDatabaseSettings.cache_type.name(), GraphDatabaseSettings.CacheTypeSetting.strong ) );
         HighlyAvailableGraphDatabase sDb = (HighlyAvailableGraphDatabase) getSlave( 0 );
         HighlyAvailableGraphDatabase mDb = getMasterHaDb();
 
@@ -379,10 +385,9 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
         long slaveNodeId = slave.createNode().getId();
 
         // Restart the master
-        getMasterHaDb().shutdown();
+        shutdownMaster();
         HighlyAvailableGraphDatabase newMaster = startUpMasterDb( MapUtil.stringMap() );
         getMaster().setGraphDb( newMaster );
-        
 
         // Try to commit the tx from the slave and make sure it cannot do that
         slaveTx.success();
@@ -405,8 +410,8 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     public void committsAndRollbacksCountCorrectlyOnMaster() throws Exception
     {
         initializeDbs( 1 );
-        GraphDatabaseSPI master = getMaster().getGraphDb();
-        GraphDatabaseSPI slave = getSlave( 0 );
+        GraphDatabaseAPI master = getMaster().getGraphDb();
+        GraphDatabaseAPI slave = getSlave( 0 );
 
         // A successful tx on the master should increment number of commits on master
         Pair<Integer, Integer> masterTxsBefore = getTransactionCounts( master );
@@ -437,7 +442,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     public void individuallyConfigurableLockReadTimeout() throws Exception
     {
         long lockTimeout = 1;
-        initializeDbs( 1, stringMap( CONFIG_KEY_LOCK_READ_TIMEOUT, String.valueOf( lockTimeout ) ) );
+        initializeDbs( 1, stringMap( HaSettings.lock_read_timeout.name(), String.valueOf( lockTimeout ) ) );
         final Long nodeId = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
         final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         pullUpdates();
@@ -477,7 +482,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     public void useLockTimeoutForCleaningUpTransactions() throws Exception
     {
         final long lockTimeout = 1;
-        initializeDbs( 1, stringMap( CONFIG_KEY_LOCK_READ_TIMEOUT, String.valueOf( lockTimeout ) ) );
+        initializeDbs( 1, stringMap( HaSettings.lock_read_timeout.name(), String.valueOf( lockTimeout ) ) );
         final Long nodeId = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
         final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         pullUpdates();
@@ -516,7 +521,7 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
     public void useLockTimeoutToPreventCleaningUpLongRunningTransactions() throws Exception
     {
         final long lockTimeout = 100;
-        initializeDbs( 1, stringMap( CONFIG_KEY_LOCK_READ_TIMEOUT, String.valueOf( lockTimeout ) ) );
+        initializeDbs( 1, stringMap( HaSettings.lock_read_timeout.name(), String.valueOf( lockTimeout ) ) );
         final Long nodeId = executeJobOnMaster( new CommonJobs.CreateNodeJob( true ) );
         final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         pullUpdates();
@@ -543,13 +548,47 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
 
         executeJob( new CommonJobs.HoldLongLock( nodeId, latchFetcher ), 0 );
     }
+    
+    @Test
+    public void lockWaitTimeoutShouldHaveSilentTxFinishRollingBackToNotHideOriginalException() throws Exception
+    {
+        final long lockTimeout = 1;
+        initializeDbs( 1, stringMap( HaSettings.lock_read_timeout.name(), String.valueOf( lockTimeout ) ) );
+        final Long otherNodeId = executeJob( new CommonJobs.CreateNodeJob( true ), 0 );
+        final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
+        ExecutorService executor = newFixedThreadPool( 1 );
+        final long refNodeId = getMasterHaDb().getReferenceNode().getId();
+        Future<Void> lockHolder = executor.submit( new Callable<Void>()
+        {
+            @Override
+            public Void call() throws Exception
+            {
+                executeJobOnMaster( new CommonJobs.HoldLongLock( refNodeId, latchFetcher ) );
+                return null;
+            }
+        } );
+        
+        DoubleLatch latch = latchFetcher.fetch();
+        latch.awaitFirst(); // Wait for lockHolder to grab the lock
+        try
+        {
+            executeJob( new CommonJobs.SetNodePropertyWithThrowJob( otherNodeId.longValue(),
+                    refNodeId, "key", "value" ), 0 );
+            fail( "Should've failed" );
+        }
+        catch ( ComException e )
+        {   // Good
+        }
+        latch.countDownSecond();
+        assertNull( lockHolder.get() );
+    }
 
     @Ignore
     @Test
     public void readLockWithoutTxOnSlaveShouldNotGrabIndefiniteLockOnMaster() throws Exception
     {
         final long lockTimeout = 1;
-        initializeDbs( 1, stringMap( CONFIG_KEY_LOCK_READ_TIMEOUT, String.valueOf( lockTimeout ) ) );
+        initializeDbs( 1, stringMap( HaSettings.lock_read_timeout.name(), String.valueOf( lockTimeout ) ) );
         final long[] id = new long[1];
         final Fetcher<DoubleLatch> latchFetcher = getDoubleLatch();
         Thread lockHolder = new Thread( new Runnable()
@@ -572,8 +611,8 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
                     {
                         tx.finish();
                     }
-                    ( (GraphDatabaseSPI) slaveDb ).getLockManager().getReadLock( node );
-                    ( (GraphDatabaseSPI) slaveDb ).getLockReleaser().addLockToTransaction( node, LockType.READ );
+                    ( (GraphDatabaseAPI) slaveDb ).getLockManager().getReadLock( node );
+                    ( (GraphDatabaseAPI) slaveDb ).getLockReleaser().addLockToTransaction( node, LockType.READ );
                     id[0] = node.getId();
                     latch.countDownFirst();
                     latch.awaitSecond();
@@ -670,8 +709,98 @@ public class SingleJvmWithNettyTest extends SingleJvmTest
             fail( "Should not have gotten more than one failed pullUpdates during master switch." );
         }
     }
+    
+    @Test
+    public void bruteForceCreateSameRelationshipTypeOnDifferentSlaveAtTheSameTimeShouldYieldSameId() throws Exception
+    {
+        int slaves = 3;
+        initializeDbs( slaves );
 
-    private Pair<Integer, Integer> getTransactionCounts( GraphDatabaseSPI master )
+        for ( int i = 0; i < 10; i++ )
+        {
+            final RelationshipType relType = DynamicRelationshipType.withName( "Rel" + i );
+            final CountDownLatch latch = new CountDownLatch( 1 );
+            List<Thread> threads = new ArrayList<Thread>();
+            for ( int s = 0; s < slaves; s++ )
+            {
+                final GraphDatabaseAPI db = getSlave( s );
+                Thread thread = new Thread()
+                {
+                    @Override
+                    public void run()
+                    {
+                        try
+                        {
+                            latch.await();
+                        }
+                        catch ( InterruptedException e )
+                        {
+                            throw new RuntimeException( e );
+                        }
+                        
+                        Transaction tx = db.beginTx();
+                        try
+                        {
+                            db.createNode().createRelationshipTo( db.createNode(), relType );
+                            tx.success();
+                        }
+                        finally
+                        {
+                            tx.finish();
+                        }
+                    }
+                };
+                thread.start();
+                threads.add( thread );
+            }
+            
+            latch.countDown();
+            for ( Thread thread : threads )
+            {
+                thread.join();
+            }
+            
+            List<GraphDatabaseAPI> dbs = new ArrayList<GraphDatabaseAPI>();
+            dbs.add( getMasterHaDb() );
+            for ( int s = 0; s < slaves; s++ )
+                dbs.add( getSlave( s ) );
+            
+            // Verify so that the relationship type on all the machines has got the same id
+            int highestId = 0;
+            for ( GraphDatabaseAPI db : dbs )
+            {
+                RelationshipTypeHolder holder = db.getNodeManager().getRelationshipTypeHolder();
+                highestId = highestIdOf( holder, highestId );
+                Set<String> types = new HashSet<String>();
+                for ( int j = 0; j <= highestId; j++ )
+                {
+                    RelationshipType type = holder.getRelationshipType( j );
+                    if ( type != null )
+                    {
+                        assertTrue( type.name() + " already existed for " + db, types.add( type.name() ) );
+                    }
+                }
+            }
+        }
+        pullUpdates();
+    }
+
+    private int highestIdOf( RelationshipTypeHolder holder, int high )
+    {
+        for ( RelationshipType type : holder.getRelationshipTypes() )
+        {
+            high = Math.max( holder.getIdFor( type.name() ), high );
+        }
+        return high;
+    }
+
+    private RelationshipType getRelationshipType( GraphDatabaseAPI db, String name )
+    {
+        int id = db.getNodeManager().getRelationshipTypeHolder().getIdFor( name );
+        return db.getNodeManager().getRelationshipTypeHolder().getRelationshipType( id );
+    }
+
+    private Pair<Integer, Integer> getTransactionCounts( GraphDatabaseAPI master )
     {
         return Pair.of(
             ( (TxManager) master.getTxManager() ).getCommittedTxCount(),

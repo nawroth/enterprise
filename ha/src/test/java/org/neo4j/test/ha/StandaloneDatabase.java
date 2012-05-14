@@ -17,9 +17,8 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.test.ha;
 
-import static java.util.Arrays.asList;
+package org.neo4j.test.ha;
 
 import java.io.File;
 import java.io.PrintStream;
@@ -29,26 +28,25 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
 import org.junit.Ignore;
 import org.neo4j.com.Client;
 import org.neo4j.com.Protocol;
+import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.helpers.Format;
-import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.kernel.ConfigProxy;
-import org.neo4j.kernel.HaConfig;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
-import org.neo4j.kernel.ha.AbstractBroker;
+import org.neo4j.kernel.configuration.Config;
+import org.neo4j.kernel.configuration.ConfigurationDefaults;
 import org.neo4j.kernel.ha.Broker;
 import org.neo4j.kernel.ha.FakeMasterBroker;
 import org.neo4j.kernel.ha.FakeSlaveBroker;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.MasterClient;
-import org.neo4j.kernel.ha.zookeeper.ZooClient;
 import org.neo4j.kernel.ha.zookeeper.ZooKeeperException;
 import org.neo4j.management.HighAvailability;
 import org.neo4j.test.subprocess.SubProcess;
-
 import slavetest.Job;
+
+import static java.util.Arrays.*;
 
 @Ignore
 public class StandaloneDatabase
@@ -60,9 +58,9 @@ public class StandaloneDatabase
             String[] extraArgs )
     {
         List<String> args = new ArrayList<String>();
-        args.add( HaConfig.CONFIG_KEY_SERVER );
+        args.add( HaSettings.server.name() );
         args.add( haServer );
-        args.add( HaConfig.CONFIG_KEY_COORDINATORS );
+        args.add( HaSettings.coordinators.name() );
         args.add( zooKeeper.getConnectionString() );
         args.addAll( asList( extraArgs ) );
 
@@ -116,17 +114,19 @@ public class StandaloneDatabase
                     {
                         if ( getMachineId() == masterId )
                         {
-                            ZooClient.Configuration zooConfig = ConfigProxy.config( removeDashes( config ), ZooClient.Configuration.class );
-                            AbstractBroker.Configuration brokerConfig = ConfigProxy.config( removeDashes( config ), AbstractBroker.Configuration.class );
-                            return new FakeMasterBroker( brokerConfig, zooConfig );
+                            Config configuration = new Config( new ConfigurationDefaults(GraphDatabaseSettings.class, HaSettings.class ).apply( removeDashes(config) ));
+                            return new FakeMasterBroker( configuration );
                         }
                         else
                         {
+                            config.put( HaSettings.server_id.name(), Integer.toString( getMachineId() ) );
+                            Config configuration = new Config( new ConfigurationDefaults(GraphDatabaseSettings.class, HaSettings.class ).apply( removeDashes(config) ));
+
                             return new FakeSlaveBroker( new MasterClient( "localhost",
                                     Protocol.PORT, getMessageLog(), storeIdGetter, Client.ConnectionLostHandler.NO_ACTION, Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                                     Client.DEFAULT_READ_RESPONSE_TIMEOUT_SECONDS,
                                     Client.DEFAULT_MAX_NUMBER_OF_CONCURRENT_CHANNELS_PER_CLIENT ),
-                                    masterId, ConfigProxy.config( MapUtil.stringMap( "ha.server_id", Integer.toString( getMachineId() ) ), AbstractBroker.Configuration.class ));
+                                    masterId, configuration);
                         }
                     }
                 };
@@ -289,7 +289,7 @@ public class StandaloneDatabase
         final HighlyAvailableGraphDatabase start()
         {
             Map<String, String> params = new HashMap<String, String>();
-            params.put( HaConfig.CONFIG_KEY_SERVER_ID, Integer.toString( machineId ) );
+            params.put( HaSettings.server_id.name(), Integer.toString( machineId ) );
             for ( int i = 0; i < config.length; i += 2 )
             {
                 params.put( config[i], config[i + 1] );

@@ -22,8 +22,12 @@ package org.neo4j.kernel.ha;
 
 import java.util.Map;
 
+import org.neo4j.graphdb.index.IndexProvider;
 import org.neo4j.kernel.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.IdGeneratorFactory;
+import org.neo4j.kernel.KernelExtension;
+import org.neo4j.kernel.impl.cache.CacheProvider;
+import org.neo4j.kernel.impl.core.Caches;
 import org.neo4j.kernel.impl.core.LastCommittedTxIdSetter;
 import org.neo4j.kernel.impl.core.NodeProxy;
 import org.neo4j.kernel.impl.core.RelationshipProxy;
@@ -32,7 +36,7 @@ import org.neo4j.kernel.impl.nioneo.store.StoreFactory;
 import org.neo4j.kernel.impl.nioneo.store.StoreId;
 import org.neo4j.kernel.impl.transaction.TxHook;
 import org.neo4j.kernel.impl.transaction.xaframework.TxIdGenerator;
-import org.neo4j.kernel.impl.util.StringLogger;
+import org.neo4j.kernel.logging.Logging;
 
 /**
  * TODO
@@ -44,12 +48,14 @@ public class MasterGraphDatabase
 
     public MasterGraphDatabase( String storeDir, Map<String, String> params,
                                 StoreId storeId, HighlyAvailableGraphDatabase highlyAvailableGraphDatabase,
-                                Broker broker, StringLogger logger,
+                                Broker broker, Logging logging,
                                 NodeProxy.NodeLookup nodeLookup,
-                                RelationshipProxy.RelationshipLookups relationshipLookups
-    )
+                                RelationshipProxy.RelationshipLookups relationshipLookups,
+                                Iterable<IndexProvider> indexProviders, Iterable<KernelExtension> kernelExtensions,
+                                Iterable<CacheProvider> cacheProviders, Caches caches )
     {
-        super( storeDir, params, highlyAvailableGraphDatabase, broker, logger, nodeLookup, relationshipLookups );
+        super( storeDir, params, storeId, highlyAvailableGraphDatabase, broker, logging, nodeLookup, relationshipLookups,
+                indexProviders, kernelExtensions, cacheProviders, caches );
         this.storeId = storeId;
 
         run();
@@ -58,7 +64,7 @@ public class MasterGraphDatabase
     @Override
     protected StoreFactory createStoreFactory()
     {
-        return new StoreFactory(params, idGeneratorFactory, fileSystem, lastCommittedTxIdSetter, msgLog, txHook)
+        return new StoreFactory(config, idGeneratorFactory, fileSystem, lastCommittedTxIdSetter, msgLog, txHook)
         {
             @Override
             public NeoStore createNeoStore( String fileName )

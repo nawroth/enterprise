@@ -17,20 +17,21 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
 package org.neo4j.backup;
 
 import org.neo4j.com.MasterUtil;
 import org.neo4j.com.Response;
 import org.neo4j.com.SlaveContext;
 import org.neo4j.com.StoreWriter;
-import org.neo4j.kernel.Config;
-import org.neo4j.kernel.GraphDatabaseSPI;
+import org.neo4j.graphdb.factory.GraphDatabaseSetting;
+import org.neo4j.kernel.GraphDatabaseAPI;
 
 class BackupImpl implements TheBackupInterface
 {
-    private final GraphDatabaseSPI graphDb;
+    private final GraphDatabaseAPI graphDb;
 
-    public BackupImpl( GraphDatabaseSPI graphDb )
+    public BackupImpl( GraphDatabaseAPI graphDb )
     {
         this.graphDb = graphDb;
     }
@@ -55,7 +56,7 @@ class BackupImpl implements TheBackupInterface
         // to catch up on reading them. On Linux/Mac this isn't a due to a more flexible
         // file handling system. Solution: rotate before doing an incremental backup
         // in Windows to avoid running into that problem.
-        if ( Config.osIsWindows() )
+        if ( GraphDatabaseSetting.osIsWindows() )
         {
             MasterUtil.rotateLogs( graphDb );
         }

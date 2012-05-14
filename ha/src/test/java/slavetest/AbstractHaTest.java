@@ -17,6 +17,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
 package slavetest;
 
 import static org.junit.Assert.assertEquals;
@@ -24,7 +25,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
-import static org.neo4j.kernel.HaConfig.CONFIG_KEY_PULL_INTERVAL;
 
 import java.io.File;
 import java.io.IOException;
@@ -54,6 +54,7 @@ import org.neo4j.helpers.collection.IterableWrapper;
 import org.neo4j.helpers.collection.IteratorUtil;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.impl.transaction.xaframework.InMemoryLogBuffer;
 import org.neo4j.kernel.impl.transaction.xaframework.LogExtractor;
 import org.neo4j.kernel.impl.transaction.xaframework.XaDataSource;
@@ -668,7 +669,7 @@ public abstract class AbstractHaTest
     public void makeSurePullIntervalWorks() throws Exception
     {
         startUpMaster( stringMap() );
-        addDb( stringMap( CONFIG_KEY_PULL_INTERVAL, "10ms" ), true );
+        addDb( stringMap( HaSettings.pull_interval.name(), "10ms" ), true );
         Long nodeId = executeJobOnMaster( new CommonJobs.CreateSubRefNodeJob( "PULL", "key", "value" ) );
         long endTime = System.currentTimeMillis()+1000;
         boolean found = false;
@@ -816,5 +817,11 @@ public abstract class AbstractHaTest
             Thread.interrupted();
             throw new RuntimeException( e );
         }
+    }
+
+    protected void addDefaultConfig( Map<String, String> config )
+    {
+        if ( !config.containsKey( HaSettings.read_timeout.name() ) )
+            config.put( HaSettings.read_timeout.name(), String.valueOf( TEST_READ_TIMEOUT ) );
     }
 }
