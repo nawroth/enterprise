@@ -23,6 +23,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.management.ManagementFactory;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -78,20 +79,28 @@ public class JmxDocsTest
     {
         StringBuilder beanList = new StringBuilder( 2048 );
         beanList.append( ".MBeans exposed by Neo4j\n"
-                         + "[options=\"header\", cols=\"m,m,\"]\n" + "|===\n"
-                         + "|name|name0|Description\n" );
+                         + "[options=\"header\", cols=\"m,\"]\n" + "|===\n"
+                         + "|name(/name0)|Description\n" );
 
         MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
         Set<ObjectInstance> beans = mBeanServer.queryMBeans( new ObjectName(
                 "org.neo4j:*" ), null );
-        SortedMap<String,ObjectName> neo4jBeans = new TreeMap<String,ObjectName>();
+        SortedMap<String, ObjectName> neo4jBeans = new TreeMap<String, ObjectName>();
         for ( ObjectInstance bean : beans )
         {
-            neo4jBeans.put( bean.getObjectName()
-                    .getKeyProperty( BEAN_NAME ), bean.getObjectName() );
+            ObjectName objectName = bean.getObjectName();
+            String name = objectName.getKeyProperty( BEAN_NAME );
+            String name0 = objectName.getKeyProperty( BEAN_NAME0 );
+            if ( name0 != null )
+            {
+                name += '/' + name0;
+            }
+            neo4jBeans.put( name, bean.getObjectName() );
         }
-        for ( ObjectName objectName : neo4jBeans.values() )
+        for ( Map.Entry<String, ObjectName> beanEntry : neo4jBeans.entrySet() )
         {
+            ObjectName objectName = beanEntry.getValue();
+            String name = beanEntry.getKey();
             Set<ObjectInstance> mBeans = mBeanServer.queryMBeans( objectName,
                     null );
             if ( mBeans.size() != 1 )
@@ -107,7 +116,11 @@ public class JmxDocsTest
             String description = info.getDescription()
                     .replace( '\n', ' ' );
 
-            addToOutput( beanList, objectName, description );
+            beanList.append( '|' )
+                    .append( name )
+                    .append( '|' )
+                    .append( description )
+                    .append( '\n' );
 
             writeDetailsToFile( objectName, bean, info, description );
         }
@@ -117,7 +130,6 @@ public class JmxDocsTest
         {
             fw = AsciiDocGenerator.getFW( "target/docs/ops", "JMX List" );
             fw.write( beanList.toString() );
-            System.out.println( beanList.toString() );
         }
         finally
         {
@@ -126,7 +138,6 @@ public class JmxDocsTest
                 fw.close();
             }
         }
-        System.out.println( "Finished writing docs files." );
     }
 
     private void writeDetailsToFile( ObjectName objectName,
@@ -148,30 +159,28 @@ public class JmxDocsTest
                     .append( name )
                     .append( " (" )
                     .append( bean.getClassName() )
-                    .append( ") Attributes" );
-            beanInfo.append( "\n" + "[options=\"header\", cols=\",,m,\"]\n"
-                             + "|===\n" + "|Name|Description|Type|Read|Write\n" );
-
-            beanInfo.append( description )
+                    .append( ") Attributes\n" )
+                    .append(
+                            "[options=\"header\", cols=\"m,,m,,\"]\n"
+                                    + "|===\n"
+                                    + "|Name|Description|Type|Read|Write\n"
+                                    + "5.1+^e|" )
+                    .append( description )
                     .append( '\n' );
             for ( MBeanAttributeInfo attrInfo : attributes )
             {
-                beanInfo.append( attrInfo.getName() );
-                beanInfo.append( '|' );
-                beanInfo.append( attrInfo.getDescription()
-                        .replace( '\n', ' ' ) );
-                beanInfo.append( '|' );
-                String type = attrInfo.getType();
-                if ( type.endsWith( "CompositeData;" ) )
-                {
-                    type = "CompositeData";
-                }
-                beanInfo.append( type );
-                beanInfo.append( '|' );
-                beanInfo.append( attrInfo.isReadable() ? "yes" : "no" );
-                beanInfo.append( '|' );
-                beanInfo.append( attrInfo.isWritable() ? "yes" : "no" );
-                beanInfo.append( '\n' );
+                beanInfo.append( '|' )
+                        .append( attrInfo.getName() )
+                        .append( '|' )
+                        .append( attrInfo.getDescription()
+                                .replace( '\n', ' ' ) )
+                        .append( '|' )
+                        .append( getType( attrInfo.getType() ) )
+                        .append( '|' )
+                        .append( attrInfo.isReadable() ? "yes" : "no" )
+                        .append( '|' )
+                        .append( attrInfo.isWritable() ? "yes" : "no" )
+                        .append( '\n' );
             }
             beanInfo.append( "|===\n\n" );
         }
@@ -184,18 +193,18 @@ public class JmxDocsTest
                     .append( " (" )
                     .append( bean.getClassName() )
                     .append( ") Operations" );
-            beanInfo.append( "\n"
-                             + "[options=\"header\", cols=\",,m,m\"]\n"
+            beanInfo.append( "\n" + "[options=\"header\", cols=\"m,,m,m\"]\n"
                              + "|===\n"
-                             + "|Name|Description|ReturnType|Impact|Signature\n" );
+                             + "|Name|Description|ReturnType|Signature\n" );
             for ( MBeanOperationInfo operInfo : operations )
             {
+                beanInfo.append( '|' );
                 beanInfo.append( operInfo.getName() );
                 beanInfo.append( '|' );
                 beanInfo.append( operInfo.getDescription()
                         .replace( '\n', ' ' ) );
                 beanInfo.append( '|' );
-                beanInfo.append( operInfo.getReturnType() );
+                beanInfo.append( getType( operInfo.getReturnType() ) );
                 beanInfo.append( '|' );
                 MBeanParameterInfo[] params = operInfo.getSignature();
                 for ( int i = 0; i < params.length; i++ )
@@ -211,7 +220,7 @@ public class JmxDocsTest
                 }
                 beanInfo.append( '\n' );
             }
-            beanInfo.append( '\n' );
+            beanInfo.append( "|===\n\n" );
         }
 
         if ( beanInfo.length() > 0 )
@@ -220,7 +229,6 @@ public class JmxDocsTest
             try
             {
                 fw = AsciiDocGenerator.getFW( "target/docs/ops", "JMX-" + name );
-                System.out.println( beanInfo.toString() );
                 fw.write( beanInfo.toString() );
             }
             finally
@@ -233,20 +241,19 @@ public class JmxDocsTest
         }
     }
 
-    private void addToOutput( StringBuilder beanList, ObjectName objectName,
-            String description )
+    private String getType( String type )
     {
-        String name = objectName.getKeyProperty( BEAN_NAME );
-        String name0 = objectName.getKeyProperty( BEAN_NAME0 );
-
-        beanList.append( name )
-                .append( '|' );
-        if ( name0 != null )
+        if ( type.endsWith( ";" ) )
         {
-            beanList.append( name0 );
+            if ( type.startsWith( "[L" ) )
+            {
+                return type.substring( 2, type.length() - 1 ) + "[]";
+            }
+            else
+            {
+                System.out.println( "===== UNKNOWN TYPE: " + type );
+            }
         }
-        beanList.append( '|' )
-                .append( description )
-                .append( '\n' );
+        return type;
     }
 }
