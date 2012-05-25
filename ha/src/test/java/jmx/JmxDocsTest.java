@@ -101,8 +101,11 @@ public class JmxDocsTest
     @Test
     public void dumpJmxInfo() throws Exception
     {
-        StringBuilder beanList = new StringBuilder( 2048 );
+        StringBuilder beanList = new StringBuilder( 4096 );
+        StringBuilder altBeanList = new StringBuilder( 2048 );
+        altBeanList.append( "ifdef::nonhtmloutput[]\n" );
         beanList.append( "[[jmx-list]]\n" + ".MBeans exposed by Neo4j\n"
+                         + "ifndef::nonhtmloutput[]\n"
                          + "[options=\"header\", cols=\"m,\"]\n" + "|===\n"
                          + "|Name|Description\n" );
 
@@ -161,9 +164,19 @@ public class JmxDocsTest
                     .append( description )
                     .append( '\n' );
 
+            altBeanList.append( "* <<" )
+                    .append( id )
+                    .append( ',' )
+                    .append( name )
+                    .append( ">>: " )
+                    .append( description )
+                    .append( '\n' );
+
             writeDetailsToFile( id, objectName, bean, info, description );
         }
-        beanList.append( "|===\n" );
+        beanList.append( "|===\n" + "endif::nonhtmloutput[]\n" );
+        altBeanList.append( "endif::nonhtmloutput[]\n\n" );
+        beanList.append( altBeanList.toString() );
         Writer fw = null;
         try
         {
