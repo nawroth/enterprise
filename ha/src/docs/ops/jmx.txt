@@ -3,17 +3,15 @@ include::jmx-list.txt[]
 
 include::jmx-branched-store.txt[]
 
-include::jmx-cache----nodecache.txt[]
+include::jmx-cache-nodecache.txt[]
 
-include::jmx-cache----relationshipcache.txt[]
+include::jmx-cache-relationshipcache.txt[]
 
 include::jmx-configuration.txt[]
 
 include::jmx-diagnostics.txt[]
 
 include::jmx-high-availability.txt[]
-
-include::jmx-jmx-server.txt[]
 
 include::jmx-kernel.txt[]
 

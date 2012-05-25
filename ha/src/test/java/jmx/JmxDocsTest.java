@@ -19,10 +19,16 @@
  */
 package jmx;
 
+import static org.junit.Assert.assertEquals;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.management.ManagementFactory;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
@@ -51,6 +57,24 @@ public class JmxDocsTest
 {
     private static final String BEAN_NAME0 = "name0";
     private static final String BEAN_NAME = "name";
+    private static final List<String> QUERIES = Arrays.asList( new String[] { "org.neo4j:*" } );
+    private static final int EXPECTED_NUMBER_OF_BEANS = 13;
+    private static final Set<String> EXCLUDES = new HashSet<String>()
+    {
+        {
+            add( "JMX Server" );
+        }
+    };
+    private static final Map<String, String> TYPES = new HashMap<String, String>()
+    {
+        {
+            put( "java.lang.String", "string" );
+            put( "long", "integer (64-bit, long)" );
+            put( "int", "integer (32-bit, int)" );
+            put( "java.util.List", "list (java.util.List)" );
+            put( "java.util.Date", "date (java.util.Date)" );
+        }
+    };
     private static final TargetDirectory dir = TargetDirectory.forTest( JmxDocsTest.class );
     private static LocalhostZooKeeperCluster zk;
     private static HighlyAvailableGraphDatabase db;
@@ -78,25 +102,37 @@ public class JmxDocsTest
     public void dumpJmxInfo() throws Exception
     {
         StringBuilder beanList = new StringBuilder( 2048 );
-        beanList.append( ".MBeans exposed by Neo4j\n"
+        beanList.append( "[[jmx-list]]\n" + ".MBeans exposed by Neo4j\n"
                          + "[options=\"header\", cols=\"m,\"]\n" + "|===\n"
-                         + "|name(/name0)|Description\n" );
+                         + "|Name|Description\n" );
 
         MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
-        Set<ObjectInstance> beans = mBeanServer.queryMBeans( new ObjectName(
-                "org.neo4j:*" ), null );
         SortedMap<String, ObjectName> neo4jBeans = new TreeMap<String, ObjectName>();
-        for ( ObjectInstance bean : beans )
+
+        for ( String query : QUERIES )
         {
-            ObjectName objectName = bean.getObjectName();
-            String name = objectName.getKeyProperty( BEAN_NAME );
-            String name0 = objectName.getKeyProperty( BEAN_NAME0 );
-            if ( name0 != null )
+            Set<ObjectInstance> beans = mBeanServer.queryMBeans(
+                    new ObjectName( query ), null );
+            for ( ObjectInstance bean : beans )
             {
-                name += '/' + name0;
+                ObjectName objectName = bean.getObjectName();
+                System.out.println( objectName );
+                String name = objectName.getKeyProperty( BEAN_NAME );
+                if ( EXCLUDES.contains( name ) )
+                {
+                    continue;
+                }
+                String name0 = objectName.getKeyProperty( BEAN_NAME0 );
+                if ( name0 != null )
+                {
+                    name += '/' + name0;
+                }
+                neo4jBeans.put( name, bean.getObjectName() );
             }
-            neo4jBeans.put( name, bean.getObjectName() );
+
         }
+        assertEquals( "Sanity checking the number of beans found;",
+                EXPECTED_NUMBER_OF_BEANS, neo4jBeans.size() );
         for ( Map.Entry<String, ObjectName> beanEntry : neo4jBeans.entrySet() )
         {
             ObjectName objectName = beanEntry.getValue();
@@ -116,13 +152,16 @@ public class JmxDocsTest
             String description = info.getDescription()
                     .replace( '\n', ' ' );
 
-            beanList.append( '|' )
+            String id = getId( name );
+            beanList.append( "|<<" )
+                    .append( id )
+                    .append( ',' )
                     .append( name )
-                    .append( '|' )
+                    .append( ">>|" )
                     .append( description )
                     .append( '\n' );
 
-            writeDetailsToFile( objectName, bean, info, description );
+            writeDetailsToFile( id, objectName, bean, info, description );
         }
         beanList.append( "|===\n" );
         Writer fw = null;
@@ -140,7 +179,14 @@ public class JmxDocsTest
         }
     }
 
-    private void writeDetailsToFile( ObjectName objectName,
+    private String getId( String name )
+    {
+        return "jmx-" + name.replace( ' ', '-' )
+                .replace( '/', '-' )
+                .toLowerCase();
+    }
+
+    private void writeDetailsToFile( String id, ObjectName objectName,
             ObjectInstance bean, MBeanInfo info, String description )
             throws IOException
     {
@@ -149,13 +195,15 @@ public class JmxDocsTest
         String name0 = objectName.getKeyProperty( BEAN_NAME0 );
         if ( name0 != null )
         {
-            name += " -- " + name0;
+            name += "/" + name0;
         }
 
         MBeanAttributeInfo[] attributes = info.getAttributes();
         if ( attributes.length > 0 )
         {
-            beanInfo.append( '.' )
+            beanInfo.append( "[[" )
+                    .append( id )
+                    .append( "]]\n" + ".MBean " )
                     .append( name )
                     .append( " (" )
                     .append( bean.getClassName() )
@@ -188,7 +236,7 @@ public class JmxDocsTest
         MBeanOperationInfo[] operations = info.getOperations();
         if ( operations.length > 0 )
         {
-            beanInfo.append( '.' )
+            beanInfo.append( ".MBean " )
                     .append( name )
                     .append( " (" )
                     .append( bean.getClassName() )
@@ -228,7 +276,7 @@ public class JmxDocsTest
             Writer fw = null;
             try
             {
-                fw = AsciiDocGenerator.getFW( "target/docs/ops", "JMX-" + name );
+                fw = AsciiDocGenerator.getFW( "target/docs/ops", id );
                 fw.write( beanInfo.toString() );
             }
             finally
@@ -243,7 +291,11 @@ public class JmxDocsTest
 
     private String getType( String type )
     {
-        if ( type.endsWith( ";" ) )
+        if ( TYPES.containsKey( type ) )
+        {
+            return TYPES.get( type );
+        }
+        else if ( type.endsWith( ";" ) )
         {
             if ( type.startsWith( "[L" ) )
             {
